@@ -123,7 +123,7 @@ async function GET() {
     // RLS fa già il filtraggio:
     // - STAFF: vede tutti i giocatori e tutte le statistiche
     // - GIOCATORE: vede solo il proprio Player_ID
-    const [playersResult, matchesResult, statsResult] = await Promise.all([
+    const [playersResult, matchesResult, statsResult, seasonResult] = await Promise.all([
         supabase.from('players').select('player_id,nome').order('nome', {
             ascending: true
         }),
@@ -131,24 +131,20 @@ async function GET() {
             ascending: true
         }),
         supabase.from('player_match_stats').select(`
-        match_id,
-        player_id,
-        minuti,
-        gol,
-        gol_per_90,
-        tiri,
-        tiri_per_90,
-        passaggi,
-        passaggi_completati,
-        passaggi_percento,
-        distanza_km,
-        distanza_km_per_90,
-        sprint,
-        sprint_per_90,
-        corse_alta_intensita,
-        corse_alta_intensita_per_90,
-        velocita_max_kmh,
-        velocita_media_kmh
+        match_id, player_id, minuti, gol, gol_per_90, tiri, tiri_per_90,
+        passaggi, passaggi_completati, passaggi_percento,
+        distanza_km, distanza_km_per_90, sprint, sprint_per_90,
+        corse_alta_intensita, corse_alta_intensita_per_90,
+        velocita_max_kmh, velocita_media_kmh
+      `),
+        supabase.from('player_season_stats').select(`
+        player_id, presenze, minuti, gol, gol_per_90, tiri, tiri_per_90,
+        passaggi, passaggi_per_90, passaggi_completati, passaggi_completati_per_90,
+        passaggi_percento, distanza_km, distanza_km_per_90,
+        sprint, sprint_per_90, corse_alta_intensita, corse_alta_intensita_per_90,
+        velocita_max_kmh, velocita_media_kmh, minuti_per_presenza,
+        sprint_per_km, corse_alta_intensita_per_km, gol_per_tiro,
+        minuti_per_gol, minuti_per_tiro
       `)
     ]);
     if (playersResult.error) {
@@ -172,9 +168,21 @@ async function GET() {
             status: 502
         });
     }
+    if (seasonResult.error) {
+        return __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$server$2e$js__$5b$app$2d$route$5d$__$28$ecmascript$29$__["NextResponse"].json({
+            error: `Supabase player_season_stats: ${seasonResult.error.message}`
+        }, {
+            status: 502
+        });
+    }
     const allPlayers = playersResult.data ?? [];
     const allMatches = matchesResult.data ?? [];
     const allStats = statsResult.data ?? [];
+    const allSeason = seasonResult.data ?? [];
+    const seasonMap = new Map(allSeason.map((row)=>[
+            row.player_id,
+            row
+        ]));
     if (!isStaff && !allPlayers.some((p)=>p.player_id === ownPlayerId)) {
         return __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$server$2e$js__$5b$app$2d$route$5d$__$28$ecmascript$29$__["NextResponse"].json({
             error: 'Player_ID associato ma non presente nella tabella players.'
@@ -190,71 +198,38 @@ async function GET() {
             m.match_id,
             m
         ]));
-    // Aggregazione stagionale direttamente dai dati per-partita di Supabase.
-    const seasonal = new Map();
-    allStats.forEach((s)=>{
-        const current = seasonal.get(s.player_id) ?? {
-            appearances: 0,
-            minutes: 0,
-            goals: 0,
-            shots: 0,
-            passes: 0,
-            completedPasses: 0,
-            distanceKm: 0,
-            sprints: 0,
-            highIntensityRuns: 0,
-            maxSpeed: 0,
-            averageSpeedWeighted: 0
-        };
-        const minutes = num(s.minuti);
-        current.appearances += 1;
-        current.minutes += minutes;
-        current.goals += num(s.gol);
-        current.shots += num(s.tiri);
-        current.passes += num(s.passaggi);
-        current.completedPasses += num(s.passaggi_completati);
-        current.distanceKm += num(s.distanza_km);
-        current.sprints += num(s.sprint);
-        current.highIntensityRuns += num(s.corse_alta_intensita);
-        current.maxSpeed = Math.max(current.maxSpeed, num(s.velocita_max_kmh));
-        current.averageSpeedWeighted += num(s.velocita_media_kmh) * minutes;
-        seasonal.set(s.player_id, current);
-    });
+    // Fonte ufficiale delle statistiche stagionali:
+    // player_season_stats, sincronizzata da ANALISI_GIOCATORI.
     const allSeasonalPlayers = allPlayers.map((p)=>{
-        const s = seasonal.get(p.player_id) ?? {
-            appearances: 0,
-            minutes: 0,
-            goals: 0,
-            shots: 0,
-            passes: 0,
-            completedPasses: 0,
-            distanceKm: 0,
-            sprints: 0,
-            highIntensityRuns: 0,
-            maxSpeed: 0,
-            averageSpeedWeighted: 0
-        };
+        const s = seasonMap.get(p.player_id);
         return {
             playerId: p.player_id,
             name: p.nome,
-            appearances: s.appearances,
-            minutes: s.minutes,
-            goals: s.goals,
-            goalsPer90: per90(s.goals, s.minutes),
-            shots: s.shots,
-            shotsPer90: per90(s.shots, s.minutes),
-            passes: s.passes,
-            completedPasses: s.completedPasses,
-            passSuccess: s.passes > 0 ? s.completedPasses / s.passes * 100 : 0,
-            distanceKm: s.distanceKm,
-            distancePer90: per90(s.distanceKm, s.minutes),
-            sprints: s.sprints,
-            sprintsPer90: per90(s.sprints, s.minutes),
-            highIntensityRuns: s.highIntensityRuns,
-            highIntensityRunsPer90: per90(s.highIntensityRuns, s.minutes),
-            maxSpeed: s.maxSpeed,
-            averageSpeed: s.minutes > 0 ? s.averageSpeedWeighted / s.minutes : 0,
-            minutesPerAppearance: s.appearances > 0 ? s.minutes / s.appearances : 0
+            appearances: num(s?.presenze),
+            minutes: num(s?.minuti),
+            goals: num(s?.gol),
+            goalsPer90: num(s?.gol_per_90),
+            shots: num(s?.tiri),
+            shotsPer90: num(s?.tiri_per_90),
+            passes: num(s?.passaggi),
+            passesPer90: num(s?.passaggi_per_90),
+            completedPasses: num(s?.passaggi_completati),
+            completedPassesPer90: num(s?.passaggi_completati_per_90),
+            passSuccess: num(s?.passaggi_percento),
+            distanceKm: num(s?.distanza_km),
+            distancePer90: num(s?.distanza_km_per_90),
+            sprints: num(s?.sprint),
+            sprintsPer90: num(s?.sprint_per_90),
+            highIntensityRuns: num(s?.corse_alta_intensita),
+            highIntensityRunsPer90: num(s?.corse_alta_intensita_per_90),
+            maxSpeed: num(s?.velocita_max_kmh),
+            averageSpeed: num(s?.velocita_media_kmh),
+            minutesPerAppearance: num(s?.minuti_per_presenza),
+            sprintsPerKm: num(s?.sprint_per_km),
+            highIntensityRunsPerKm: num(s?.corse_alta_intensita_per_km),
+            goalsPerShot: num(s?.gol_per_tiro),
+            minutesPerGoal: num(s?.minuti_per_gol),
+            minutesPerShot: num(s?.minuti_per_tiro)
         };
     });
     const allMatchStats = allStats.map((s)=>{
