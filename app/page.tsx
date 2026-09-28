@@ -7,6 +7,9 @@ type Player = {
   shots: number; shotsPer90: number; passes: number; completedPasses: number; passSuccess: number;
   distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
   highIntensityRuns: number; highIntensityRunsPer90: number; maxSpeed: number; averageSpeed: number; minutesPerAppearance: number;
+  passesPer90: number; completedPassesPer90: number;
+  sprintsPerKm: number; highIntensityRunsPerKm: number;
+  goalsPerShot: number; minutesPerGoal: number; minutesPerShot: number;
 };
 type Match = {
   matchId: string; date: string; match: string; playerId: string; playerName: string; minutes: number;
@@ -147,6 +150,20 @@ export default function Home() {
           <Stat label="Tiri" value={int(player.shots)} /><Stat label="Tiri / 90" value={fmt(player.shotsPer90, 2)} /><Stat label="Passaggi" value={int(player.passes)} /><Stat label="Passaggi completati" value={int(player.completedPasses)} />
           <Stat label="Passaggi %" value={fmt(player.passSuccess, 1)} suffix="%" /><Stat label="Distanza" value={fmt(player.distanceKm, 1)} suffix=" km" /><Stat label="Sprint" value={int(player.sprints)} /><Stat label="Alta intensità" value={int(player.highIntensityRuns)} />
           <Stat label="Velocità max" value={fmt(player.maxSpeed, 1)} suffix=" km/h" /><Stat label="Velocità media" value={fmt(player.averageSpeed, 1)} suffix=" km/h" /><Stat label="Distanza / 90" value={fmt(player.distancePer90, 1)} suffix=" km" /><Stat label="Minuti / presenza" value={fmt(player.minutesPerAppearance, 1)} />
+        </section>
+        <section className="panel tablePanel advancedStats">
+          <div className="sectionTitle"><div><span className="eyebrow">ANALISI STAGIONALE</span><h2>Indicatori avanzati</h2></div><span>stagione</span></div>
+          <div className="statsGrid advancedGrid">
+            <Stat label="Passaggi / 90" value={fmt(player.passesPer90, 2)} />
+            <Stat label="Passaggi completati / 90" value={fmt(player.completedPassesPer90, 2)} />
+            <Stat label="Sprint / 90" value={fmt(player.sprintsPer90, 2)} />
+            <Stat label="Alta intensità / 90" value={fmt(player.highIntensityRunsPer90, 2)} />
+            <Stat label="Sprint / km" value={fmt(player.sprintsPerKm, 2)} />
+            <Stat label="Alta intensità / km" value={fmt(player.highIntensityRunsPerKm, 2)} />
+            <Stat label="Gol / tiro" value={fmt(player.goalsPerShot, 2)} />
+            <Stat label="Minuti / gol" value={player.goals > 0 ? fmt(player.minutesPerGoal, 1) : '—'} />
+            <Stat label="Minuti / tiro" value={fmt(player.minutesPerShot, 1)} />
+          </div>
         </section>
         {data.role === 'GIOCATORE' ? <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">PARTITE</span><h2>Partite generali</h2></div><span>{generalPlayerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Presenza</th><th>Min</th><th>Gol</th><th>Tiri</th><th>Passaggi %</th><th>Distanza</th></tr></thead><tbody>{generalPlayerMatches.map((m, i) => { const s = m.stats; return <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{s ? 'Sì' : 'Non impiegato'}</td><td>{s ? int(s.minutes) : '—'}</td><td>{s ? int(s.goals) : '—'}</td><td>{s ? int(s.shots) : '—'}</td><td>{s ? `${fmt(s.passSuccess, 1)}%` : '—'}</td><td>{s ? `${fmt(s.distanceKm, 1)} km` : '—'}</td></tr>; })}</tbody></table></div></section> : <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">MATCH LOG</span><h2>Partite</h2></div><span>{playerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Min</th><th>Gol</th><th>Tiri</th><th>Passaggi %</th><th>Distanza</th><th>V. max</th></tr></thead><tbody>{playerMatches.map((m, i) => <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{int(m.minutes)}</td><td>{int(m.goals)}</td><td>{int(m.shots)}</td><td>{fmt(m.passSuccess, 1)}%</td><td>{fmt(m.distanceKm, 1)} km</td><td>{fmt(m.maxSpeed, 1)} km/h</td></tr>)}</tbody></table></div></section>}
         <section className="chartsGrid"><LineChart title="Minuti per partita" unit="min" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.minutes }))} /><LineChart title="Distanza per partita" unit="km" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.distanceKm }))} /><LineChart title="Velocità massima" unit="km/h" color="neutral" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.maxSpeed }))} /></section>
