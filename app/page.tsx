@@ -14,12 +14,13 @@ type Player = {
 };
 type Match = {
   matchId: string; date: string; match: string; playerId: string; playerName: string; minutes: number;
+  competition: 'CAMPIONATO' | 'COPPA';
   assists: number; yellowCards: number; redCards: number;
   goals: number; goalsPer90: number; shots: number; shotsPer90: number; passes: number; completedPasses: number;
   passSuccess: number; distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
   highIntensityRuns: number; highIntensityRunsPer90: number; maxSpeed: number; averageSpeed: number;
 };
-type TeamMatch = { matchId: string; date: string; match: string };
+type TeamMatch = { matchId: string; date: string; match: string; competition: 'CAMPIONATO' | 'COPPA' };
 type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamMatches?: TeamMatch[]; error?: string };
 
 const fmt = (v: unknown, digits = 1) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -59,8 +60,16 @@ function LineChart({ title, values, unit, color = 'green' }: { title: string; va
 }
 
 function RankTable({ title, rows, metricLabel }: { title: string; rows: { name: string; value: number }[]; metricLabel: string }) {
+  const visibleRows = rows.slice(0, 8);
   return <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">RANKING</span><h2>{title}</h2></div><span>{metricLabel}</span></div><div className="rankingList">
-    {rows.slice(0, 8).map((r, i) => <div className="rankRow" key={r.name}><span className="rankNo">{i + 1}</span><strong>{r.name}</strong><span>{fmt(r.value, 2)}</span></div>)}
+    {visibleRows.length ? visibleRows.map((r, i) => <div className="rankRow" key={r.name}><span className="rankNo">{i + 1}</span><strong>{r.name}</strong><span>{fmt(r.value, 2)}</span></div>) : <div className="rankEmpty">Nessun dato disponibile.</div>}
+  </div></section>;
+}
+
+function DisciplineRankTable({ title, rows, metricLabel }: { title: string; rows: { name: string; yellowCards: number; redCards: number }[]; metricLabel: string }) {
+  const visibleRows = rows.slice(0, 8);
+  return <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">DISCIPLINA</span><h2>{title}</h2></div><span>{metricLabel}</span></div><div className="rankingList">
+    {visibleRows.length ? visibleRows.map((r, i) => <div className="disciplineRankRow" key={r.name}><span className="rankNo">{i + 1}</span><strong>{r.name}</strong><span className="yellowValue">{int(r.yellowCards)}</span><span className="redValue">{int(r.redCards)}</span></div>) : <div className="rankEmpty">Nessun cartellino.</div>}
   </div></section>;
 }
 
@@ -143,17 +152,44 @@ export default function Home() {
 
   const rankings = useMemo(() => ({
     goals: [...players].sort((a,b) => b.goals - a.goals).map(p => ({name:p.name,value:p.goals})),
+    assists: [...players].filter(p => p.assists > 0).sort((a,b) => b.assists - a.assists || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.assists})),
     goals90: [...players].sort((a,b) => b.goalsPer90 - a.goalsPer90).map(p => ({name:p.name,value:p.goalsPer90})),
     speed: [...players].sort((a,b) => b.maxSpeed - a.maxSpeed).map(p => ({name:p.name,value:p.maxSpeed})),
     distance90: [...players].sort((a,b) => b.distancePer90 - a.distancePer90).map(p => ({name:p.name,value:p.distancePer90})),
   }), [players]);
-  const disciplineRows = useMemo(() => [...players].sort((a, b) =>
-    b.assists - a.assists ||
-    b.yellowCards - a.yellowCards ||
-    b.redCards - a.redCards ||
-    b.minutes - a.minutes ||
-    a.name.localeCompare(b.name, 'it')
-  ), [players]);
+  const disciplineByCompetition = useMemo(() => {
+    const playerNameById = new Map(players.map(p => [p.playerId, p.name]));
+    const buckets = {
+      CAMPIONATO: new Map<string, { name: string; yellowCards: number; redCards: number }>(),
+      COPPA: new Map<string, { name: string; yellowCards: number; redCards: number }>(),
+    };
+
+    matches.forEach(m => {
+      if (!m.yellowCards && !m.redCards) return;
+      const bucket = buckets[m.competition === 'COPPA' ? 'COPPA' : 'CAMPIONATO'];
+      const current = bucket.get(m.playerId) ?? {
+        name: m.playerName || playerNameById.get(m.playerId) || m.playerId,
+        yellowCards: 0,
+        redCards: 0,
+      };
+      current.yellowCards += m.yellowCards;
+      current.redCards += m.redCards;
+      bucket.set(m.playerId, current);
+    });
+
+    const sortedRows = (rows: Map<string, { name: string; yellowCards: number; redCards: number }>) =>
+      [...rows.values()].sort((a, b) =>
+        (b.yellowCards + b.redCards) - (a.yellowCards + a.redCards) ||
+        b.redCards - a.redCards ||
+        b.yellowCards - a.yellowCards ||
+        a.name.localeCompare(b.name, 'it')
+      );
+
+    return {
+      campionato: sortedRows(buckets.CAMPIONATO),
+      coppa: sortedRows(buckets.COPPA),
+    };
+  }, [matches, players]);
 
   const a = players.find(p => p.name === compareA);
   const b = players.find(p => p.name === compareB);
@@ -210,10 +246,11 @@ export default function Home() {
         <Stat label="Tiri" value={int(team.shots)} /><Stat label="Passaggi" value={int(team.passes)} /><Stat label="Passaggi %" value={fmt(team.passSuccess,1)} suffix="%" /><Stat label="Distanza" value={fmt(team.distance,1)} suffix=" km" />
         <Stat label="Sprint" value={int(team.sprints)} /><Stat label="Alta intensità" value={int(team.highIntensity)} /><Stat label="Velocità max" value={fmt(team.maxSpeed,1)} suffix=" km/h" />
       </section>
-      <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">SQUADRA</span><h2>Assist e disciplina</h2></div><span>{int(team.assists)} assist · {int(team.yellowCards)} ammonizioni · {int(team.redCards)} espulsioni</span></div><div className="tableWrap"><table className="disciplineTable"><thead><tr><th>#</th><th>Giocatore</th><th>Assist</th><th>Ammonizioni</th><th>Espulsioni</th></tr></thead><tbody>{disciplineRows.map((p, i) => <tr key={p.playerId}><td>{i + 1}</td><td>{p.name}</td><td className="assistValue">{int(p.assists)}</td><td className="yellowValue">{int(p.yellowCards)}</td><td className="redValue">{int(p.redCards)}</td></tr>)}</tbody></table></div></section>
+      <div className="twoCol"><RankTable title="Gol" metricLabel="totale" rows={rankings.goals} /><RankTable title="Assist" metricLabel="totale" rows={rankings.assists} /></div>
+      <div className="twoCol"><DisciplineRankTable title="Campionato" metricLabel="amm. / esp." rows={disciplineByCompetition.campionato} /><DisciplineRankTable title="Coppa" metricLabel="amm. / esp." rows={disciplineByCompetition.coppa} /></div>
       <section className="chartsGrid teamCharts"><LineChart title="Distanza squadra per partita" unit="km" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.distance}))} /><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Tiri squadra per partita" unit="tiri" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.shots}))} /></section>
-      <div className="twoCol"><RankTable title="Gol" metricLabel="totale" rows={rankings.goals} /><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /></div>
-      <div className="twoCol"><RankTable title="Velocità massima" metricLabel="km/h" rows={rankings.speed} /><RankTable title="Distanza / 90" metricLabel="km" rows={rankings.distance90} /></div>
+      <div className="twoCol"><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /><RankTable title="Velocità massima" metricLabel="km/h" rows={rankings.speed} /></div>
+      <div className="singleCol"><RankTable title="Distanza / 90" metricLabel="km" rows={rankings.distance90} /></div>
     </>}
 
     {view === 'minutes' && data.role === 'STAFF' && <>

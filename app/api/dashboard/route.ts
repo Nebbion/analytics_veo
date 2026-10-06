@@ -9,7 +9,7 @@ type PlayerRow = {
   nome: string;
 };
 
-type MatchRow = {
+type MatchRow = Record<string, unknown> & {
   match_id: string;
   data: string | null;
   partita: string;
@@ -48,6 +48,20 @@ const optionalNum = (row: Record<string, unknown> | undefined, keys: string[]) =
   }
 
   return 0;
+};
+const optionalText = (row: Record<string, unknown> | undefined, keys: string[]) => {
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+
+  return '';
+};
+
+const competitionLabel = (row: MatchRow | undefined) => {
+  const raw = optionalText(row, ['competizione', 'competition', 'torneo', 'tipo', 'tipo_partita', 'categoria']);
+  const label = raw || row?.partita || '';
+  return /coppa/i.test(label) ? 'COPPA' : 'CAMPIONATO';
 };
 
 const assistKeys = ['assist', 'assists', 'assistenze'];
@@ -119,7 +133,7 @@ export async function GET() {
       .order('nome', { ascending: true }),
     supabase
       .from('matches')
-      .select('match_id,data,partita')
+      .select('*')
       .order('data', { ascending: true }),
     supabase
       .from('player_match_stats')
@@ -235,6 +249,7 @@ export async function GET() {
       matchId: s.match_id,
       date: match?.data ?? '',
       match: match?.partita ?? '',
+      competition: competitionLabel(match),
       playerId: s.player_id,
       playerName: playerNameMap.get(s.player_id) ?? '',
       minutes,
@@ -273,6 +288,7 @@ export async function GET() {
     matchId: m.match_id,
     date: m.data ?? '',
     match: m.partita,
+    competition: competitionLabel(m),
   }));
 
   if (!isStaff && !players.length) {
