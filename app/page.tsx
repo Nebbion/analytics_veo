@@ -22,6 +22,16 @@ type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string
 
 const fmt = (v: unknown, digits = 1) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const int = (v: unknown) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: 0 });
+const opponentLabel = (match: string) => {
+  const fallback = match.trim() || '—';
+  const opponent = fallback
+    .replace(/A\.?S\.?D\.?\s+Villanovese|Villanovese/gi, '')
+    .replace(/\s*(?:-|–|—|vs\.?)\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return opponent || fallback;
+};
 
 function Stat({ label, value, suffix = '' }: { label: string; value: string | number; suffix?: string }) {
   return <div className="stat"><span>{label}</span><strong>{value}{suffix}</strong></div>;
@@ -56,7 +66,7 @@ export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState('');
-  const [view, setView] = useState<'player' | 'team' | 'compare'>('player');
+  const [view, setView] = useState<'player' | 'team' | 'minutes' | 'compare'>('player');
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
 
@@ -83,6 +93,17 @@ export default function Home() {
     ...g,
     stats: matches.find(m => m.matchId === g.matchId) ?? null,
   })), [teamMatches, matches]);
+  const minutesRows = useMemo(() => {
+    const minutesByPlayerMatch = new Map<string, number>();
+    matches.forEach(m => minutesByPlayerMatch.set(`${m.playerId}:${m.matchId}`, m.minutes));
+
+    return [...players]
+      .sort((a, b) => b.minutes - a.minutes || a.name.localeCompare(b.name, 'it'))
+      .map(p => ({
+        player: p,
+        matchMinutes: teamMatches.map(match => minutesByPlayerMatch.get(`${p.playerId}:${match.matchId}`) ?? 0),
+      }));
+  }, [players, matches, teamMatches]);
 
   const team = useMemo(() => {
     const totalMinutes = players.reduce((s, p) => s + p.minutes, 0);
@@ -138,7 +159,7 @@ export default function Home() {
 
     <nav className="tabs" aria-label="Sezioni dashboard">
       <button className={view === 'player' ? 'active' : ''} onClick={() => setView('player')}>Giocatore</button>
-      {data.role === 'STAFF' && <><button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button><button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button></>}
+      {data.role === 'STAFF' && <><button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button><button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button><button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button></>}
     </nav>
 
     {view === 'player' && <>
@@ -179,6 +200,28 @@ export default function Home() {
       <section className="chartsGrid teamCharts"><LineChart title="Distanza squadra per partita" unit="km" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.distance}))} /><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Tiri squadra per partita" unit="tiri" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.shots}))} /></section>
       <div className="twoCol"><RankTable title="Gol" metricLabel="totale" rows={rankings.goals} /><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /></div>
       <div className="twoCol"><RankTable title="Velocità massima" metricLabel="km/h" rows={rankings.speed} /><RankTable title="Distanza / 90" metricLabel="km" rows={rankings.distance90} /></div>
+    </>}
+
+    {view === 'minutes' && data.role === 'STAFF' && <>
+      <section className="hero"><div><p className="eyebrow">STAFF MINUTES</p><h1>Minuti giocatori</h1><p>Tutti i giocatori ordinati per minuti totali, con il dettaglio partita per partita.</p></div><div className="heroMeta"><span>Partite</span><strong>{teamMatches.length}</strong></div></section>
+      <section className="panel tablePanel minutesPanel">
+        <div className="sectionTitle"><div><span className="eyebrow">ROSA</span><h2>Distribuzione minuti</h2></div><span>{minutesRows.length} giocatori</span></div>
+        <div className="minutesTableWrap">
+          <table className="minutesTable">
+            <thead>
+              <tr><th className="rankColumn">#</th><th className="playerColumn">Giocatore</th>{teamMatches.map(match => <th key={match.matchId} className="opponentColumn" title={`${dateLabel(match.date)} · ${match.match}`}>{opponentLabel(match.match)}</th>)}<th className="totalColumn">Totale</th></tr>
+            </thead>
+            <tbody>
+              {minutesRows.map((row, index) => <tr key={row.player.playerId}>
+                <td className="rankColumn">{index + 1}</td>
+                <td className="playerColumn"><strong>{row.player.name}</strong><span>{int(row.player.appearances)} presenze</span></td>
+                {row.matchMinutes.map((minutes, i) => <td key={`${row.player.playerId}-${teamMatches[i]?.matchId ?? i}`} className={minutes > 0 ? 'playedMinutes' : 'emptyMinutes'}>{minutes > 0 ? int(minutes) : '—'}</td>)}
+                <td className="totalColumn"><strong>{int(row.player.minutes)}</strong></td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </>}
 
     {view === 'compare' && <>

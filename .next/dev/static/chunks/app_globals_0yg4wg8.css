@@ -693,4 +693,115 @@ code {
   font-size: 12px;
 }
 
+.minutesPanel {
+  overflow: hidden;
+}
+
+.minutesTableWrap {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-width: 100%;
+  overflow: auto;
+}
+
+.minutesTable {
+  min-width: max-content;
+}
+
+.minutesTable th, .minutesTable td {
+  text-align: center;
+  padding: 11px 12px;
+}
+
+.minutesTable thead th {
+  background: var(--panel);
+  z-index: 2;
+  position: sticky;
+  top: 0;
+}
+
+.minutesTable .rankColumn {
+  min-width: 48px;
+  color: var(--muted);
+}
+
+.minutesTable .opponentColumn {
+  white-space: normal;
+  min-width: 96px;
+  max-width: 140px;
+  line-height: 1.2;
+}
+
+.minutesTable .playerColumn {
+  z-index: 1;
+  text-align: left;
+  background: var(--panel);
+  min-width: 220px;
+  box-shadow: 1px 0 0 var(--line);
+  position: sticky;
+  left: 0;
+}
+
+.minutesTable thead .playerColumn {
+  z-index: 3;
+}
+
+.minutesTable .playerColumn strong {
+  color: var(--text);
+  font-size: 13px;
+  display: block;
+}
+
+.minutesTable .playerColumn span {
+  color: var(--muted);
+  margin-top: 3px;
+  font-size: 11px;
+  display: block;
+}
+
+.minutesTable .totalColumn {
+  z-index: 1;
+  min-width: 88px;
+  color: var(--green2);
+  box-shadow: -1px 0 0 var(--line);
+  background: #121c14;
+  position: sticky;
+  right: 0;
+}
+
+.minutesTable thead .totalColumn {
+  z-index: 3;
+}
+
+.playedMinutes {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.emptyMinutes {
+  color: #59625b;
+}
+
+.minutesTable tbody tr:hover td {
+  background: #131b16;
+}
+
+.minutesTable tbody tr:hover .totalColumn {
+  background: #162319;
+}
+
+@media (max-width: 800px) {
+  .minutesTable .playerColumn {
+    min-width: 170px;
+  }
+
+  .minutesTable th, .minutesTable td {
+    padding: 10px 9px;
+  }
+
+  .minutesTable .totalColumn {
+    min-width: 76px;
+  }
+}
+
 /*# sourceMappingURL=app_globals_0yg4wg8.css.map*/
