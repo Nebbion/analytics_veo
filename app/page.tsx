@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 type Player = {
   playerId: string; name: string; appearances: number; minutes: number; goals: number; goalsPer90: number;
+  assists: number; yellowCards: number; redCards: number;
   shots: number; shotsPer90: number; passes: number; completedPasses: number; passSuccess: number;
   distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
   highIntensityRuns: number; highIntensityRunsPer90: number; maxSpeed: number; averageSpeed: number; minutesPerAppearance: number;
@@ -13,6 +14,7 @@ type Player = {
 };
 type Match = {
   matchId: string; date: string; match: string; playerId: string; playerName: string; minutes: number;
+  assists: number; yellowCards: number; redCards: number;
   goals: number; goalsPer90: number; shots: number; shotsPer90: number; passes: number; completedPasses: number;
   passSuccess: number; distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
   highIntensityRuns: number; highIntensityRunsPer90: number; maxSpeed: number; averageSpeed: number;
@@ -110,6 +112,9 @@ export default function Home() {
     return {
       players: players.length,
       goals: players.reduce((s, p) => s + p.goals, 0),
+      assists: players.reduce((s, p) => s + p.assists, 0),
+      yellowCards: players.reduce((s, p) => s + p.yellowCards, 0),
+      redCards: players.reduce((s, p) => s + p.redCards, 0),
       shots: players.reduce((s, p) => s + p.shots, 0),
       passes: players.reduce((s, p) => s + p.passes, 0),
       completedPasses: players.reduce((s, p) => s + p.completedPasses, 0),
@@ -142,6 +147,13 @@ export default function Home() {
     speed: [...players].sort((a,b) => b.maxSpeed - a.maxSpeed).map(p => ({name:p.name,value:p.maxSpeed})),
     distance90: [...players].sort((a,b) => b.distancePer90 - a.distancePer90).map(p => ({name:p.name,value:p.distancePer90})),
   }), [players]);
+  const disciplineRows = useMemo(() => [...players].sort((a, b) =>
+    b.assists - a.assists ||
+    b.yellowCards - a.yellowCards ||
+    b.redCards - a.redCards ||
+    b.minutes - a.minutes ||
+    a.name.localeCompare(b.name, 'it')
+  ), [players]);
 
   const a = players.find(p => p.name === compareA);
   const b = players.find(p => p.name === compareB);
@@ -194,9 +206,11 @@ export default function Home() {
     {view === 'team' && <>
       <section className="hero"><div><p className="eyebrow">TEAM CENTER</p><h1>Dashboard squadra</h1><p>Panoramica aggregata delle statistiche della rosa.</p></div><div className="heroMeta"><span>Giocatori con dati</span><strong>{team.players}</strong></div></section>
       <section className="statsGrid">
-        <Stat label="Gol" value={int(team.goals)} /><Stat label="Tiri" value={int(team.shots)} /><Stat label="Passaggi" value={int(team.passes)} /><Stat label="Passaggi %" value={fmt(team.passSuccess,1)} suffix="%" />
-        <Stat label="Distanza" value={fmt(team.distance,1)} suffix=" km" /><Stat label="Sprint" value={int(team.sprints)} /><Stat label="Alta intensità" value={int(team.highIntensity)} /><Stat label="Velocità max" value={fmt(team.maxSpeed,1)} suffix=" km/h" />
+        <Stat label="Gol" value={int(team.goals)} /><Stat label="Assist" value={int(team.assists)} /><Stat label="Ammonizioni" value={int(team.yellowCards)} /><Stat label="Espulsioni" value={int(team.redCards)} />
+        <Stat label="Tiri" value={int(team.shots)} /><Stat label="Passaggi" value={int(team.passes)} /><Stat label="Passaggi %" value={fmt(team.passSuccess,1)} suffix="%" /><Stat label="Distanza" value={fmt(team.distance,1)} suffix=" km" />
+        <Stat label="Sprint" value={int(team.sprints)} /><Stat label="Alta intensità" value={int(team.highIntensity)} /><Stat label="Velocità max" value={fmt(team.maxSpeed,1)} suffix=" km/h" />
       </section>
+      <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">SQUADRA</span><h2>Assist e disciplina</h2></div><span>{int(team.assists)} assist · {int(team.yellowCards)} ammonizioni · {int(team.redCards)} espulsioni</span></div><div className="tableWrap"><table className="disciplineTable"><thead><tr><th>#</th><th>Giocatore</th><th>Assist</th><th>Ammonizioni</th><th>Espulsioni</th></tr></thead><tbody>{disciplineRows.map((p, i) => <tr key={p.playerId}><td>{i + 1}</td><td>{p.name}</td><td className="assistValue">{int(p.assists)}</td><td className="yellowValue">{int(p.yellowCards)}</td><td className="redValue">{int(p.redCards)}</td></tr>)}</tbody></table></div></section>
       <section className="chartsGrid teamCharts"><LineChart title="Distanza squadra per partita" unit="km" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.distance}))} /><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Tiri squadra per partita" unit="tiri" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.shots}))} /></section>
       <div className="twoCol"><RankTable title="Gol" metricLabel="totale" rows={rankings.goals} /><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /></div>
       <div className="twoCol"><RankTable title="Velocità massima" metricLabel="km/h" rows={rankings.speed} /><RankTable title="Distanza / 90" metricLabel="km" rows={rankings.distance90} /></div>

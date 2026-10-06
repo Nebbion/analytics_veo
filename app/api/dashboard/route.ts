@@ -15,11 +15,11 @@ type MatchRow = {
   partita: string;
 };
 
-type SeasonRow = {
+type SeasonRow = Record<string, unknown> & {
   player_id: string; presenze: number|null; minuti: number|null; gol: number|null; gol_per_90: number|null; tiri: number|null; tiri_per_90: number|null; passaggi: number|null; passaggi_per_90: number|null; passaggi_completati: number|null; passaggi_completati_per_90: number|null; passaggi_percento: number|null; distanza_km: number|null; distanza_km_per_90: number|null; sprint: number|null; sprint_per_90: number|null; corse_alta_intensita: number|null; corse_alta_intensita_per_90: number|null; velocita_max_kmh: number|null; velocita_media_kmh: number|null; minuti_per_presenza: number|null; sprint_per_km: number|null; corse_alta_intensita_per_km: number|null; gol_per_tiro: number|null; minuti_per_gol: number|null; minuti_per_tiro: number|null;
 };
 
-type StatRow = {
+type StatRow = Record<string, unknown> & {
   match_id: string;
   player_id: string;
   minuti: number | null;
@@ -41,6 +41,18 @@ type StatRow = {
 };
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
+const optionalNum = (row: Record<string, unknown> | undefined, keys: string[]) => {
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null) return num(value);
+  }
+
+  return 0;
+};
+
+const assistKeys = ['assist', 'assists', 'assistenze'];
+const yellowCardKeys = ['ammonizioni', 'ammonizione', 'cartellini_gialli', 'gialli', 'cartellini_giallo'];
+const redCardKeys = ['espulsioni', 'espulsione', 'cartellini_rossi', 'rossi', 'cartellini_rosso'];
 
 const per90 = (value: number, minutes: number) =>
   minutes > 0 ? value * 90 / minutes : 0;
@@ -111,24 +123,10 @@ export async function GET() {
       .order('data', { ascending: true }),
     supabase
       .from('player_match_stats')
-      .select(`
-        match_id, player_id, minuti, gol, gol_per_90, tiri, tiri_per_90,
-        passaggi, passaggi_completati, passaggi_percento,
-        distanza_km, distanza_km_per_90, sprint, sprint_per_90,
-        corse_alta_intensita, corse_alta_intensita_per_90,
-        velocita_max_kmh, velocita_media_kmh
-      `),
+      .select('*'),
     supabase
       .from('player_season_stats')
-      .select(`
-        player_id, presenze, minuti, gol, gol_per_90, tiri, tiri_per_90,
-        passaggi, passaggi_per_90, passaggi_completati, passaggi_completati_per_90,
-        passaggi_percento, distanza_km, distanza_km_per_90,
-        sprint, sprint_per_90, corse_alta_intensita, corse_alta_intensita_per_90,
-        velocita_max_kmh, velocita_media_kmh, minuti_per_presenza,
-        sprint_per_km, corse_alta_intensita_per_km, gol_per_tiro,
-        minuti_per_gol, minuti_per_tiro
-      `),
+      .select('*'),
   ]);
 
   if (playersResult.error) {
@@ -164,6 +162,15 @@ export async function GET() {
   const allStats = (statsResult.data ?? []) as StatRow[];
   const allSeason = (seasonResult.data ?? []) as SeasonRow[];
   const seasonMap = new Map(allSeason.map(row => [row.player_id, row]));
+  const matchMetricTotals = new Map<string, { assists: number; yellowCards: number; redCards: number }>();
+
+  allStats.forEach(row => {
+    const current = matchMetricTotals.get(row.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
+    current.assists += optionalNum(row, assistKeys);
+    current.yellowCards += optionalNum(row, yellowCardKeys);
+    current.redCards += optionalNum(row, redCardKeys);
+    matchMetricTotals.set(row.player_id, current);
+  });
 
   if (!isStaff && !allPlayers.some(p => p.player_id === ownPlayerId)) {
     return NextResponse.json(
@@ -184,6 +191,7 @@ export async function GET() {
   // player_season_stats, sincronizzata da ANALISI_GIOCATORI.
   const allSeasonalPlayers = allPlayers.map(p => {
     const s = seasonMap.get(p.player_id);
+    const matchTotals = matchMetricTotals.get(p.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
 
     return {
       playerId: p.player_id,
@@ -191,6 +199,9 @@ export async function GET() {
       appearances: num(s?.presenze),
       minutes: num(s?.minuti),
       goals: num(s?.gol),
+      assists: optionalNum(s, assistKeys) || matchTotals.assists,
+      yellowCards: optionalNum(s, yellowCardKeys) || matchTotals.yellowCards,
+      redCards: optionalNum(s, redCardKeys) || matchTotals.redCards,
       goalsPer90: num(s?.gol_per_90),
       shots: num(s?.tiri),
       shotsPer90: num(s?.tiri_per_90),
@@ -228,6 +239,9 @@ export async function GET() {
       playerName: playerNameMap.get(s.player_id) ?? '',
       minutes,
       goals: num(s.gol),
+      assists: optionalNum(s, assistKeys),
+      yellowCards: optionalNum(s, yellowCardKeys),
+      redCards: optionalNum(s, redCardKeys),
       goalsPer90: num(s.gol_per_90) || per90(num(s.gol), minutes),
       shots: num(s.tiri),
       shotsPer90: num(s.tiri_per_90) || per90(num(s.tiri), minutes),
