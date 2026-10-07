@@ -130,50 +130,6 @@ const rowNumber = (row: Record<string, unknown>, keys: string[]) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const rowsFromUnknown = (value: unknown): Record<string, unknown>[] => {
-  if (!Array.isArray(value)) return [];
-  if (!value.length) return [];
-
-  if (value.every(item => item && typeof item === 'object' && !Array.isArray(item))) {
-    return value as Record<string, unknown>[];
-  }
-
-  const [headers, ...rows] = value;
-  if (!Array.isArray(headers) || !headers.every(header => typeof header === 'string')) return [];
-
-  return rows
-    .filter(row => Array.isArray(row))
-    .map(row => Object.fromEntries(
-      headers.map((header, index) => [header, (row as unknown[])[index]])
-    ));
-};
-
-const collectRowsByKeys = (
-  value: unknown,
-  wantedKeys: string[],
-  depth = 0
-): Record<string, unknown>[] => {
-  if (!value || typeof value !== 'object' || depth > 4) return [];
-  const rows: Record<string, unknown>[] = [];
-
-  if (Array.isArray(value)) {
-    return rowsFromUnknown(value);
-  }
-
-  Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
-    const normalized = normalizeKey(key);
-    if (wantedKeys.some(wanted => normalizeKey(wanted) === normalized)) {
-      rows.push(...rowsFromUnknown(child));
-    }
-
-    if (child && typeof child === 'object') {
-      rows.push(...collectRowsByKeys(child, wantedKeys, depth + 1));
-    }
-  });
-
-  return rows;
-};
-
 const classifyTacticalKind = (row: Record<string, unknown>, fallback: TacticalKind): TacticalKind => {
   const label = rowText(row, ['kind', 'type', 'tipo', 'evento', 'event', 'categoria', 'azione']).toLowerCase();
   if (/tackle|contrasto|duello/.test(label)) return 'tackle';
@@ -190,8 +146,13 @@ const normalizeTacticalPoints = (
 ) => {
   const matchMap = new Map(allMatches.map(match => [match.match_id, match]));
   const rawPoints = rows.map((row, index) => {
-    const matchId = rowText(row, ['match_id', 'matchId', 'id_partita', 'partita_id', 'gara_id']);
-    const match = matchMap.get(matchId);
+    const rawMatchId = rowText(row, ['match_id', 'matchId', 'id_partita', 'partita_id', 'gara_id', 'game_id', 'fixture_id']);
+    const rawMatchLabel = rowText(row, ['match', 'partita', 'gara', 'avversario', 'opponent']);
+    const labelKey = normalizeKey(rawMatchLabel);
+    const match = matchMap.get(rawMatchId) ?? (labelKey
+      ? allMatches.find(candidate => normalizeKey(candidate.partita).includes(labelKey))
+      : undefined);
+    const matchId = rawMatchId || match?.match_id || rawMatchLabel;
     const playerId = rowText(row, ['player_id', 'playerId', 'Player_ID', 'id_giocatore', 'giocatore_id']);
     const playerName = rowText(row, ['player_name', 'playerName', 'nome_giocatore', 'giocatore', 'player', 'nome']) || playerNameMap.get(playerId) || '';
 
@@ -199,22 +160,24 @@ const normalizeTacticalPoints = (
       id: `${fallbackKind}-${matchId || 'match'}-${playerId || playerName || 'player'}-${index}`,
       kind: classifyTacticalKind(row, fallbackKind),
       matchId,
-      match: match?.partita ?? rowText(row, ['match', 'partita', 'gara', 'avversario', 'opponent']),
+      match: match?.partita ?? rawMatchLabel,
       date: match?.data ?? rowText(row, ['date', 'data']),
       competition: (/coppa/i.test(rowText(row, ['competizione', 'competition', 'torneo', 'tipo_partita', 'categoria']))
         ? 'COPPA'
         : competitionLabel(match)) as 'CAMPIONATO' | 'COPPA',
       playerId,
       playerName,
-      rawX: rowNumber(row, ['x', 'x_pct', 'x_percent', 'x_percentuale', 'coord_x', 'pos_x', 'x_pos', 'x_position', 'media_x', 'x_media']),
-      rawY: rowNumber(row, ['y', 'y_pct', 'y_percent', 'y_percentuale', 'coord_y', 'pos_y', 'y_pos', 'y_position', 'media_y', 'y_media']),
+      rawX: rowNumber(row, ['x', 'x_pct', 'x_percent', 'x_percentuale', 'coord_x', 'coordinate_x', 'location_x', 'start_x', 'end_x', 'pos_x', 'x_pos', 'x_position', 'media_x', 'x_media']),
+      rawY: rowNumber(row, ['y', 'y_pct', 'y_percent', 'y_percentuale', 'coord_y', 'coordinate_y', 'location_y', 'start_y', 'end_y', 'pos_y', 'y_pos', 'y_position', 'media_y', 'y_media']),
       minute: rowNumber(row, ['minute', 'minuto', 'min']),
-      outcome: rowText(row, ['outcome', 'esito', 'risultato', 'result', 'successo']),
+      outcome: rowText(row, ['outcome', 'esito', 'esito_evento', 'risultato', 'result', 'successo']),
     };
   }).filter(point => point.rawX !== null && point.rawY !== null);
 
   const xLooksMetric = rawPoints.some(point => Number(point.rawX) > 100);
   const yLooksMetric = xLooksMetric && rawPoints.every(point => Number(point.rawY) <= 68);
+  const xLooksFraction = rawPoints.length > 0 && rawPoints.every(point => Number(point.rawX) >= 0 && Number(point.rawX) <= 1);
+  const yLooksFraction = rawPoints.length > 0 && rawPoints.every(point => Number(point.rawY) >= 0 && Number(point.rawY) <= 1);
 
   return rawPoints.map(point => ({
     id: point.id,
@@ -225,8 +188,8 @@ const normalizeTacticalPoints = (
     competition: point.competition,
     playerId: point.playerId,
     playerName: point.playerName,
-    x: Math.max(0, Math.min(100, xLooksMetric ? Number(point.rawX) / 105 * 100 : Number(point.rawX))),
-    y: Math.max(0, Math.min(100, yLooksMetric ? Number(point.rawY) / 68 * 100 : Number(point.rawY))),
+    x: Math.max(0, Math.min(100, xLooksMetric ? Number(point.rawX) / 105 * 100 : xLooksFraction ? Number(point.rawX) * 100 : Number(point.rawX))),
+    y: Math.max(0, Math.min(100, yLooksMetric ? Number(point.rawY) / 68 * 100 : yLooksFraction ? Number(point.rawY) * 100 : Number(point.rawY))),
     minute: point.minute,
     outcome: point.outcome,
   }));
