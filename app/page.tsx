@@ -151,34 +151,43 @@ export default function Home() {
   }, [matches]);
 
   const rankings = useMemo(() => ({
-    goals: [...players].sort((a,b) => b.goals - a.goals).map(p => ({name:p.name,value:p.goals})),
-    assists: [...players].filter(p => p.assists > 0).sort((a,b) => b.assists - a.assists || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.assists})),
     goals90: [...players].sort((a,b) => b.goalsPer90 - a.goalsPer90).map(p => ({name:p.name,value:p.goalsPer90})),
     speed: [...players].sort((a,b) => b.maxSpeed - a.maxSpeed).map(p => ({name:p.name,value:p.maxSpeed})),
     distance90: [...players].sort((a,b) => b.distancePer90 - a.distancePer90).map(p => ({name:p.name,value:p.distancePer90})),
   }), [players]);
-  const disciplineByCompetition = useMemo(() => {
+  const competitionRankings = useMemo(() => {
     const playerNameById = new Map(players.map(p => [p.playerId, p.name]));
     const buckets = {
-      CAMPIONATO: new Map<string, { name: string; yellowCards: number; redCards: number }>(),
-      COPPA: new Map<string, { name: string; yellowCards: number; redCards: number }>(),
+      CAMPIONATO: new Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>(),
+      COPPA: new Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>(),
     };
 
     matches.forEach(m => {
-      if (!m.yellowCards && !m.redCards) return;
       const bucket = buckets[m.competition === 'COPPA' ? 'COPPA' : 'CAMPIONATO'];
       const current = bucket.get(m.playerId) ?? {
         name: m.playerName || playerNameById.get(m.playerId) || m.playerId,
+        goals: 0,
+        assists: 0,
         yellowCards: 0,
         redCards: 0,
       };
+      current.goals += m.goals;
+      current.assists += m.assists;
       current.yellowCards += m.yellowCards;
       current.redCards += m.redCards;
       bucket.set(m.playerId, current);
     });
 
-    const sortedRows = (rows: Map<string, { name: string; yellowCards: number; redCards: number }>) =>
-      [...rows.values()].sort((a, b) =>
+    const sortedMetricRows = (
+      rows: Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>,
+      metric: 'goals' | 'assists'
+    ) => [...rows.values()]
+      .filter(row => row[metric] > 0)
+      .sort((a, b) => b[metric] - a[metric] || a.name.localeCompare(b.name, 'it'))
+      .map(row => ({ name: row.name, value: row[metric] }));
+
+    const sortedDisciplineRows = (rows: Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>) =>
+      [...rows.values()].filter(row => row.yellowCards > 0 || row.redCards > 0).sort((a, b) =>
         (b.yellowCards + b.redCards) - (a.yellowCards + a.redCards) ||
         b.redCards - a.redCards ||
         b.yellowCards - a.yellowCards ||
@@ -186,8 +195,16 @@ export default function Home() {
       );
 
     return {
-      campionato: sortedRows(buckets.CAMPIONATO),
-      coppa: sortedRows(buckets.COPPA),
+      campionato: {
+        goals: sortedMetricRows(buckets.CAMPIONATO, 'goals'),
+        assists: sortedMetricRows(buckets.CAMPIONATO, 'assists'),
+        discipline: sortedDisciplineRows(buckets.CAMPIONATO),
+      },
+      coppa: {
+        goals: sortedMetricRows(buckets.COPPA, 'goals'),
+        assists: sortedMetricRows(buckets.COPPA, 'assists'),
+        discipline: sortedDisciplineRows(buckets.COPPA),
+      },
     };
   }, [matches, players]);
 
@@ -246,8 +263,9 @@ export default function Home() {
         <Stat label="Tiri" value={int(team.shots)} /><Stat label="Passaggi" value={int(team.passes)} /><Stat label="Passaggi %" value={fmt(team.passSuccess,1)} suffix="%" /><Stat label="Distanza" value={fmt(team.distance,1)} suffix=" km" />
         <Stat label="Sprint" value={int(team.sprints)} /><Stat label="Alta intensità" value={int(team.highIntensity)} /><Stat label="Velocità max" value={fmt(team.maxSpeed,1)} suffix=" km/h" />
       </section>
-      <div className="twoCol"><RankTable title="Gol" metricLabel="totale" rows={rankings.goals} /><RankTable title="Assist" metricLabel="totale" rows={rankings.assists} /></div>
-      <div className="twoCol"><DisciplineRankTable title="Campionato" metricLabel="amm. / esp." rows={disciplineByCompetition.campionato} /><DisciplineRankTable title="Coppa" metricLabel="amm. / esp." rows={disciplineByCompetition.coppa} /></div>
+      <div className="twoCol"><RankTable title="Gol campionato" metricLabel="totale" rows={competitionRankings.campionato.goals} /><RankTable title="Assist campionato" metricLabel="totale" rows={competitionRankings.campionato.assists} /></div>
+      <div className="twoCol"><RankTable title="Gol coppa" metricLabel="totale" rows={competitionRankings.coppa.goals} /><RankTable title="Assist coppa" metricLabel="totale" rows={competitionRankings.coppa.assists} /></div>
+      <div className="twoCol"><DisciplineRankTable title="Campionato" metricLabel="amm. / esp." rows={competitionRankings.campionato.discipline} /><DisciplineRankTable title="Coppa" metricLabel="amm. / esp." rows={competitionRankings.coppa.discipline} /></div>
       <section className="chartsGrid teamCharts"><LineChart title="Distanza squadra per partita" unit="km" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.distance}))} /><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Tiri squadra per partita" unit="tiri" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.shots}))} /></section>
       <div className="twoCol"><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /><RankTable title="Velocità massima" metricLabel="km/h" rows={rankings.speed} /></div>
       <div className="singleCol"><RankTable title="Distanza / 90" metricLabel="km" rows={rankings.distance90} /></div>
