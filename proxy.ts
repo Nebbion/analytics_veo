@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const pathname = request.nextUrl.pathname;
@@ -10,7 +10,7 @@ export async function middleware(request: NextRequest) {
   const publicAsset =
     pathname.startsWith('/_next/') ||
     pathname === '/favicon.ico' ||
-    pathname.includes('.') ;
+    pathname.includes('.');
 
   if (publicAsset) {
     return response;

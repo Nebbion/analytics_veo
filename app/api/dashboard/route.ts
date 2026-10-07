@@ -76,6 +76,7 @@ type TacticalKind = 'average' | 'shot' | 'tackle';
 type TacticalPoint = {
   id: string;
   kind: TacticalKind;
+  sourceTable?: string;
   matchId: string;
   match: string;
   date: string;
@@ -86,6 +87,7 @@ type TacticalPoint = {
   y: number;
   minute: number | null;
   outcome: string;
+  weight?: number;
 };
 
 type TacticalData = {
@@ -131,9 +133,9 @@ const rowNumber = (row: Record<string, unknown>, keys: string[]) => {
 };
 
 const classifyTacticalKind = (row: Record<string, unknown>, fallback: TacticalKind): TacticalKind => {
-  const label = rowText(row, ['kind', 'type', 'tipo', 'evento', 'event', 'categoria', 'azione']).toLowerCase();
-  if (/tackle|contrasto|duello/.test(label)) return 'tackle';
-  if (/shot|tiro|conclusione/.test(label)) return 'shot';
+  const label = rowText(row, ['kind', 'type', 'tipo', 'tipo_evento', 'evento', 'event', 'event_type', 'categoria', 'azione', 'action', 'stat', 'metric']).toLowerCase();
+  if (/tackle|contrasto|duello|intervento|recupero/.test(label)) return 'tackle';
+  if (/shot|tiro|tiri|conclusione|finish|occasione/.test(label)) return 'shot';
   if (/media|average|posizione|position/.test(label)) return 'average';
   return fallback;
 };
@@ -141,6 +143,7 @@ const classifyTacticalKind = (row: Record<string, unknown>, fallback: TacticalKi
 const normalizeTacticalPoints = (
   rows: Record<string, unknown>[],
   fallbackKind: TacticalKind,
+  sourceTable: string,
   allMatches: MatchRow[],
   playerNameMap: Map<string, string>
 ) => {
@@ -159,6 +162,7 @@ const normalizeTacticalPoints = (
     return {
       id: `${fallbackKind}-${matchId || 'match'}-${playerId || playerName || 'player'}-${index}`,
       kind: classifyTacticalKind(row, fallbackKind),
+      sourceTable,
       matchId,
       match: match?.partita ?? rawMatchLabel,
       date: match?.data ?? rowText(row, ['date', 'data']),
@@ -170,7 +174,8 @@ const normalizeTacticalPoints = (
       rawX: rowNumber(row, ['x', 'x_pct', 'x_percent', 'x_percentuale', 'coord_x', 'coordinate_x', 'location_x', 'start_x', 'end_x', 'pos_x', 'x_pos', 'x_position', 'media_x', 'x_media']),
       rawY: rowNumber(row, ['y', 'y_pct', 'y_percent', 'y_percentuale', 'coord_y', 'coordinate_y', 'location_y', 'start_y', 'end_y', 'pos_y', 'y_pos', 'y_position', 'media_y', 'y_media']),
       minute: rowNumber(row, ['minute', 'minuto', 'min']),
-      outcome: rowText(row, ['outcome', 'esito', 'esito_evento', 'risultato', 'result', 'successo']),
+      outcome: rowText(row, ['outcome', 'esito', 'esito_evento', 'risultato', 'result', 'successo']) || rowText(row, ['tipo_evento', 'event_type', 'evento', 'event']),
+      weight: rowNumber(row, ['count', 'events', 'total_events', 'totale', 'n']) ?? 1,
     };
   }).filter(point => point.rawX !== null && point.rawY !== null);
 
@@ -182,6 +187,7 @@ const normalizeTacticalPoints = (
   return rawPoints.map(point => ({
     id: point.id,
     kind: point.kind,
+    sourceTable: point.sourceTable,
     matchId: point.matchId,
     match: point.match,
     date: point.date,
@@ -192,12 +198,49 @@ const normalizeTacticalPoints = (
     y: Math.max(0, Math.min(100, yLooksMetric ? Number(point.rawY) / 68 * 100 : yLooksFraction ? Number(point.rawY) * 100 : Number(point.rawY))),
     minute: point.minute,
     outcome: point.outcome,
+    weight: point.weight,
+  }));
+};
+
+const averagePositionsFromEvents = (points: TacticalPoint[]) => {
+  const groups = new Map<string, {
+    point: TacticalPoint;
+    weight: number;
+    x: number;
+    y: number;
+  }>();
+
+  points.forEach(point => {
+    const playerKey = point.playerId || point.playerName;
+    if (!point.matchId || !playerKey) return;
+
+    const weight = Math.max(1, Number(point.weight ?? 1));
+    const key = `${point.matchId}:${playerKey}`;
+    const current = groups.get(key) ?? { point, weight: 0, x: 0, y: 0 };
+    current.weight += weight;
+    current.x += point.x * weight;
+    current.y += point.y * weight;
+    groups.set(key, current);
+  });
+
+  return [...groups.entries()].map(([key, group]) => ({
+    ...group.point,
+    id: `average-${key}`,
+    kind: 'average' as const,
+    sourceTable: 'generated_from_events',
+    x: group.x / group.weight,
+    y: group.y / group.weight,
+    minute: null,
+    outcome: `${Math.round(group.weight)} eventi`,
+    weight: group.weight,
   }));
 };
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
 const tacticalTableCandidates: { table: string; kind: TacticalKind }[] = [
+  { table: 'veo_position_stats', kind: 'average' },
+  { table: 'veo_event_positions', kind: 'average' },
   { table: 'player_average_positions', kind: 'average' },
   { table: 'tactical_average_positions', kind: 'average' },
   { table: 'average_positions', kind: 'average' },
@@ -228,7 +271,7 @@ async function fetchTacticalData(
       const { data, error } = await supabase
         .from(candidate.table)
         .select('*')
-        .limit(2000);
+        .limit(10000);
 
       if (error || !data) return { ...candidate, rows: [] as Record<string, unknown>[] };
       return { ...candidate, rows: data as Record<string, unknown>[] };
@@ -236,7 +279,7 @@ async function fetchTacticalData(
   );
 
   const points = results.flatMap(result =>
-    normalizeTacticalPoints(result.rows, result.kind, allMatches, playerNameMap)
+    normalizeTacticalPoints(result.rows, result.kind, result.table, allMatches, playerNameMap)
   );
 
   const visiblePoints = isStaff
@@ -252,8 +295,15 @@ async function fetchTacticalData(
     ).values(),
   ];
 
+  const explicitAveragePositions = dedupedPoints.filter(point =>
+    point.kind === 'average' && !point.sourceTable?.includes('event')
+  );
+  const generatedAveragePositions = averagePositionsFromEvents(
+    dedupedPoints.filter(point => point.sourceTable?.includes('event'))
+  );
+
   const data = {
-    averagePositions: dedupedPoints.filter(point => point.kind === 'average'),
+    averagePositions: explicitAveragePositions.length ? explicitAveragePositions : generatedAveragePositions,
     shots: dedupedPoints.filter(point => point.kind === 'shot'),
     tackles: dedupedPoints.filter(point => point.kind === 'tackle'),
     source: 'supabase' as const,

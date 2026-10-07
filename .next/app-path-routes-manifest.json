@@ -1,8 +1,8 @@
 {
-  "/_global-error/page": "/_global-error",
   "/_not-found/page": "/_not-found",
+  "/_global-error/page": "/_global-error",
   "/api/auth/signout/route": "/api/auth/signout",
-  "/api/dashboard/route": "/api/dashboard",
   "/login/page": "/login",
-  "/page": "/"
+  "/page": "/",
+  "/api/dashboard/route": "/api/dashboard"
 }
