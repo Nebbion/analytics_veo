@@ -319,7 +319,10 @@ export default function Home() {
   const rankings = useMemo(() => ({
     goals90: [...players].sort((a,b) => b.goalsPer90 - a.goalsPer90).map(p => ({name:p.name,value:p.goalsPer90})),
     speed: [...players].sort((a,b) => b.maxSpeed - a.maxSpeed).map(p => ({name:p.name,value:p.maxSpeed})),
-    distance90: [...players].sort((a,b) => b.distancePer90 - a.distancePer90).map(p => ({name:p.name,value:p.distancePer90})),
+    sprints90: [...players]
+      .filter(p => p.minutes > 0)
+      .sort((a,b) => b.sprintsPer90 - a.sprintsPer90 || a.name.localeCompare(b.name, 'it'))
+      .map(p => ({name:p.name,value:p.sprintsPer90})),
   }), [players]);
   const competitionRankings = useMemo(() => {
     const playerNameById = new Map(players.map(p => [p.playerId, p.name]));
@@ -515,7 +518,7 @@ export default function Home() {
       <div className="twoCol"><DisciplineRankTable title="Campionato" metricLabel="amm. / esp." rows={competitionRankings.campionato.discipline} /><DisciplineRankTable title="Coppa" metricLabel="amm. / esp." rows={competitionRankings.coppa.discipline} /></div>
       <section className="chartsGrid teamCharts"><LineChart title="Distanza squadra per partita" unit="km" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.distance}))} /><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Tiri squadra per partita" unit="tiri" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.shots}))} /></section>
       <div className="twoCol"><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /><RankTable title="Velocità massima" metricLabel="km/h" rows={rankings.speed} /></div>
-      <div className="singleCol"><RankTable title="Distanza / 90" metricLabel="km" rows={rankings.distance90} /></div>
+      <div className="singleCol"><RankTable title="Sprint / 90" metricLabel="sprint" rows={rankings.sprints90} /></div>
     </>}
 
     {view === 'minutes' && data.role === 'STAFF' && <>
