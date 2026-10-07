@@ -22,6 +22,28 @@ type Match = {
 };
 type TeamMatch = { matchId: string; date: string; match: string; competition: 'CAMPIONATO' | 'COPPA' };
 type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamMatches?: TeamMatch[]; error?: string };
+type PlayerCompetitionStats = {
+  label: 'Campionato' | 'Coppa';
+  appearances: number;
+  minutes: number;
+  goals: number;
+  assists: number;
+  yellowCards: number;
+  redCards: number;
+  shots: number;
+  shotsPer90: number;
+  passes: number;
+  completedPasses: number;
+  passSuccess: number;
+  distanceKm: number;
+  distancePer90: number;
+  sprints: number;
+  sprintsPer90: number;
+  highIntensityRuns: number;
+  highIntensityRunsPer90: number;
+  maxSpeed: number;
+  averageSpeed: number;
+};
 
 const fmt = (v: unknown, digits = 1) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const int = (v: unknown) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: 0 });
@@ -73,6 +95,23 @@ function DisciplineRankTable({ title, rows, metricLabel }: { title: string; rows
   </div></section>;
 }
 
+function PlayerCompetitionPanel({ stats }: { stats: PlayerCompetitionStats }) {
+  return <section className="panel tablePanel competitionPanel"><div className="sectionTitle"><div><span className="eyebrow">COMPETIZIONE</span><h2>{stats.label}</h2></div><span>{int(stats.appearances)} gare</span></div><div className="compactStatsGrid">
+    <Stat label="Minuti" value={int(stats.minutes)} />
+    <Stat label="Gol" value={int(stats.goals)} />
+    <Stat label="Assist" value={int(stats.assists)} />
+    <Stat label="Tiri" value={int(stats.shots)} />
+    <Stat label="Tiri / 90" value={fmt(stats.shotsPer90, 2)} />
+    <Stat label="Passaggi %" value={fmt(stats.passSuccess, 1)} suffix="%" />
+    <Stat label="Distanza" value={fmt(stats.distanceKm, 1)} suffix=" km" />
+    <Stat label="Distanza / 90" value={fmt(stats.distancePer90, 1)} suffix=" km" />
+    <Stat label="Sprint / 90" value={fmt(stats.sprintsPer90, 2)} />
+    <Stat label="Alta intensità / 90" value={fmt(stats.highIntensityRunsPer90, 2)} />
+    <Stat label="Ammonizioni" value={int(stats.yellowCards)} />
+    <Stat label="Espulsioni" value={int(stats.redCards)} />
+  </div></section>;
+}
+
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
@@ -104,6 +143,76 @@ export default function Home() {
     ...g,
     stats: matches.find(m => m.matchId === g.matchId) ?? null,
   })), [teamMatches, matches]);
+  const playerCompetitionStats = useMemo(() => {
+    const createStats = (label: 'Campionato' | 'Coppa') => ({
+      label,
+      appearances: 0,
+      minutes: 0,
+      goals: 0,
+      assists: 0,
+      yellowCards: 0,
+      redCards: 0,
+      shots: 0,
+      passes: 0,
+      completedPasses: 0,
+      distanceKm: 0,
+      sprints: 0,
+      highIntensityRuns: 0,
+      maxSpeed: 0,
+      weightedAverageSpeed: 0,
+    });
+
+    const buckets = {
+      campionato: createStats('Campionato'),
+      coppa: createStats('Coppa'),
+    };
+
+    playerMatches.forEach(match => {
+      const bucket = match.competition === 'COPPA' ? buckets.coppa : buckets.campionato;
+      if (match.minutes > 0) bucket.appearances += 1;
+      bucket.minutes += match.minutes;
+      bucket.goals += match.goals;
+      bucket.assists += match.assists;
+      bucket.yellowCards += match.yellowCards;
+      bucket.redCards += match.redCards;
+      bucket.shots += match.shots;
+      bucket.passes += match.passes;
+      bucket.completedPasses += match.completedPasses;
+      bucket.distanceKm += match.distanceKm;
+      bucket.sprints += match.sprints;
+      bucket.highIntensityRuns += match.highIntensityRuns;
+      bucket.maxSpeed = Math.max(bucket.maxSpeed, match.maxSpeed);
+      bucket.weightedAverageSpeed += match.averageSpeed * match.minutes;
+    });
+
+    const finalize = (stats: ReturnType<typeof createStats>): PlayerCompetitionStats => ({
+      label: stats.label,
+      appearances: stats.appearances,
+      minutes: stats.minutes,
+      goals: stats.goals,
+      assists: stats.assists,
+      yellowCards: stats.yellowCards,
+      redCards: stats.redCards,
+      shots: stats.shots,
+      shotsPer90: stats.minutes > 0 ? stats.shots * 90 / stats.minutes : 0,
+      passes: stats.passes,
+      completedPasses: stats.completedPasses,
+      passSuccess: stats.passes > 0 ? stats.completedPasses / stats.passes * 100 : 0,
+      distanceKm: stats.distanceKm,
+      distancePer90: stats.minutes > 0 ? stats.distanceKm * 90 / stats.minutes : 0,
+      sprints: stats.sprints,
+      sprintsPer90: stats.minutes > 0 ? stats.sprints * 90 / stats.minutes : 0,
+      highIntensityRuns: stats.highIntensityRuns,
+      highIntensityRunsPer90: stats.minutes > 0 ? stats.highIntensityRuns * 90 / stats.minutes : 0,
+      maxSpeed: stats.maxSpeed,
+      averageSpeed: stats.minutes > 0 ? stats.weightedAverageSpeed / stats.minutes : 0,
+    });
+
+    return {
+      campionato: finalize(buckets.campionato),
+      coppa: finalize(buckets.coppa),
+    };
+  }, [playerMatches]);
   const minutesRows = useMemo(() => {
     const minutesByPlayerMatch = new Map<string, number>();
     matches.forEach(m => minutesByPlayerMatch.set(`${m.playerId}:${m.matchId}`, m.minutes));
@@ -237,6 +346,7 @@ export default function Home() {
           <Stat label="Passaggi %" value={fmt(player.passSuccess, 1)} suffix="%" /><Stat label="Distanza" value={fmt(player.distanceKm, 1)} suffix=" km" /><Stat label="Sprint" value={int(player.sprints)} /><Stat label="Alta intensità" value={int(player.highIntensityRuns)} />
           <Stat label="Velocità max" value={fmt(player.maxSpeed, 1)} suffix=" km/h" /><Stat label="Velocità media" value={fmt(player.averageSpeed, 1)} suffix=" km/h" /><Stat label="Distanza / 90" value={fmt(player.distancePer90, 1)} suffix=" km" /><Stat label="Minuti / presenza" value={fmt(player.minutesPerAppearance, 1)} />
         </section>
+        <div className="twoCol competitionSplit"><PlayerCompetitionPanel stats={playerCompetitionStats.campionato} /><PlayerCompetitionPanel stats={playerCompetitionStats.coppa} /></div>
         <section className="panel tablePanel advancedStats">
           <div className="sectionTitle"><div><span className="eyebrow">ANALISI STAGIONALE</span><h2>Indicatori avanzati</h2></div><span>stagione</span></div>
           <div className="statsGrid advancedGrid">
