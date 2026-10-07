@@ -21,7 +21,23 @@ type Match = {
   highIntensityRuns: number; highIntensityRunsPer90: number; maxSpeed: number; averageSpeed: number;
 };
 type TeamMatch = { matchId: string; date: string; match: string; competition: 'CAMPIONATO' | 'COPPA' };
-type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamMatches?: TeamMatch[]; error?: string };
+type TacticalKind = 'average' | 'shot' | 'tackle';
+type TacticalPoint = {
+  id: string;
+  kind: TacticalKind;
+  matchId: string;
+  match: string;
+  date: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  playerId: string;
+  playerName: string;
+  x: number;
+  y: number;
+  minute: number | null;
+  outcome: string;
+};
+type TacticalData = { averagePositions: TacticalPoint[]; shots: TacticalPoint[]; tackles: TacticalPoint[]; source: 'supabase' | 'none' };
+type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamMatches?: TeamMatch[]; tactics?: TacticalData; error?: string };
 type PlayerCompetitionStats = {
   label: 'Campionato' | 'Coppa';
   appearances: number;
@@ -44,6 +60,7 @@ type PlayerCompetitionStats = {
   maxSpeed: number;
   averageSpeed: number;
 };
+type TacticalMode = 'average' | 'shot' | 'tackle';
 
 const fmt = (v: unknown, digits = 1) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const int = (v: unknown) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: 0 });
@@ -57,6 +74,12 @@ const opponentLabel = (match: string) => {
 
   return opponent || fallback;
 };
+const tacticalKindLabel = (kind: TacticalKind) =>
+  kind === 'shot' ? 'Tiro' : kind === 'tackle' ? 'Tackle' : 'Posizione media';
+const zoneInfo = (point: TacticalPoint) => ({
+  lane: point.y < 33.34 ? 'Sinistra' : point.y < 66.67 ? 'Centro' : 'Destra',
+  third: point.x < 33.34 ? 'Terzo difensivo' : point.x < 66.67 ? 'Terzo centrale' : 'Terzo offensivo',
+});
 
 function Stat({ label, value, suffix = '' }: { label: string; value: string | number; suffix?: string }) {
   return <div className="stat"><span>{label}</span><strong>{value}{suffix}</strong></div>;
@@ -112,13 +135,45 @@ function PlayerCompetitionPanel({ stats }: { stats: PlayerCompetitionStats }) {
   </div></section>;
 }
 
+function TacticalPitch({ title, points, mode, selectedId, onSelect }: { title: string; points: TacticalPoint[]; mode: TacticalMode; selectedId: string; onSelect: (point: TacticalPoint) => void }) {
+  const pointClass = mode === 'average' ? 'averagePoint' : mode === 'shot' ? 'shotPoint' : 'tacklePoint';
+  return <section className="panel pitchPanel"><div className="sectionTitle"><div><span className="eyebrow">TACTICAL FIELD</span><h2>{title}</h2></div><span>{points.length} {mode === 'average' ? 'posizioni' : 'eventi'}</span></div><div className="pitchWrap">
+    <svg viewBox="0 0 100 68" role="img" aria-label={title} className="footballPitch">
+      <rect x="1" y="1" width="98" height="66" rx="1.5" className="pitchLine" />
+      <line x1="50" y1="1" x2="50" y2="67" className="pitchLine" />
+      <circle cx="50" cy="34" r="9.15" className="pitchLine noFill" />
+      <circle cx="50" cy="34" r="0.7" className="pitchFill" />
+      <rect x="1" y="13.84" width="16.5" height="40.32" className="pitchLine noFill" />
+      <rect x="82.5" y="13.84" width="16.5" height="40.32" className="pitchLine noFill" />
+      <rect x="1" y="24.84" width="5.5" height="18.32" className="pitchLine noFill" />
+      <rect x="93.5" y="24.84" width="5.5" height="18.32" className="pitchLine noFill" />
+      <circle cx="11" cy="34" r="0.6" className="pitchFill" />
+      <circle cx="89" cy="34" r="0.6" className="pitchFill" />
+      {points.map((point, index) => {
+        const pitchY = point.y * 0.68;
+        return <g key={point.id} className={`tacticalPoint ${pointClass} ${point.id === selectedId ? 'selectedPoint' : ''}`} onClick={() => onSelect(point)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(point); } }} tabIndex={0} role="button" aria-label={`${point.playerName || 'Giocatore'} ${point.outcome || ''}`}>
+          <circle cx={point.x} cy={pitchY} r={point.id === selectedId ? 2.7 : mode === 'average' ? 2.4 : 1.9} />
+          {mode === 'average' && <text x={point.x} y={pitchY + 0.9} textAnchor="middle">{index + 1}</text>}
+          <title>{point.playerName || 'Giocatore'} · {point.match || 'Partita'}{point.minute !== null ? ` · ${point.minute}'` : ''}{point.outcome ? ` · ${point.outcome}` : ''}</title>
+        </g>;
+      })}
+    </svg>
+    {!points.length && <div className="pitchEmpty">Nessun dato con questi filtri.</div>}
+  </div></section>;
+}
+
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState('');
-  const [view, setView] = useState<'player' | 'team' | 'minutes' | 'compare'>('player');
+  const [view, setView] = useState<'player' | 'team' | 'minutes' | 'tactics' | 'compare'>('player');
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
+  const [tacticalMode, setTacticalMode] = useState<TacticalMode>('average');
+  const [tacticalCompetition, setTacticalCompetition] = useState<'ALL' | 'CAMPIONATO' | 'COPPA'>('ALL');
+  const [tacticalPlayerId, setTacticalPlayerId] = useState('ALL');
+  const [tacticalMatchId, setTacticalMatchId] = useState('ALL');
+  const [selectedTacticalPointId, setSelectedTacticalPointId] = useState('');
 
   useEffect(() => {
     fetch('/api/dashboard', { cache: 'no-store' })
@@ -130,6 +185,7 @@ export default function Home() {
         if (first) setSelected(first.name);
         if (first) setCompareA(first.name);
         if (second) setCompareB(second.name);
+        setTacticalPlayerId(json.role === 'GIOCATORE' && json.playerId ? json.playerId : 'ALL');
       })
       .catch(e => setError(e.message));
   }, []);
@@ -137,6 +193,7 @@ export default function Home() {
   const players = data?.players ?? [];
   const matches = data?.matches ?? [];
   const teamMatches = data?.teamMatches ?? [];
+  const tactics = data?.tactics ?? { averagePositions: [], shots: [], tackles: [], source: 'none' as const };
   const player = useMemo(() => players.find(p => p.name === selected), [players, selected]);
   const playerMatches = useMemo(() => matches.filter(m => m.playerName === selected).sort((a,b) => a.date.localeCompare(b.date)), [matches, selected]);
   const generalPlayerMatches = useMemo(() => teamMatches.map(g => ({
@@ -316,6 +373,86 @@ export default function Home() {
       },
     };
   }, [matches, players]);
+  const allTacticalPoints = useMemo(() => [
+    ...tactics.averagePositions,
+    ...tactics.shots,
+    ...tactics.tackles,
+  ], [tactics]);
+  const filteredAveragePoints = useMemo(() => tactics.averagePositions.filter(point =>
+    (tacticalCompetition === 'ALL' || point.competition === tacticalCompetition) &&
+    (tacticalPlayerId === 'ALL' || (point.playerId || point.playerName) === tacticalPlayerId) &&
+    (tacticalMatchId === 'ALL' || point.matchId === tacticalMatchId)
+  ), [tactics.averagePositions, tacticalCompetition, tacticalPlayerId, tacticalMatchId]);
+  const filteredShotPoints = useMemo(() => tactics.shots.filter(point =>
+    (tacticalCompetition === 'ALL' || point.competition === tacticalCompetition) &&
+    (tacticalPlayerId === 'ALL' || (point.playerId || point.playerName) === tacticalPlayerId) &&
+    (tacticalMatchId === 'ALL' || point.matchId === tacticalMatchId)
+  ), [tactics.shots, tacticalCompetition, tacticalPlayerId, tacticalMatchId]);
+  const filteredTacklePoints = useMemo(() => tactics.tackles.filter(point =>
+    (tacticalCompetition === 'ALL' || point.competition === tacticalCompetition) &&
+    (tacticalPlayerId === 'ALL' || (point.playerId || point.playerName) === tacticalPlayerId) &&
+    (tacticalMatchId === 'ALL' || point.matchId === tacticalMatchId)
+  ), [tactics.tackles, tacticalCompetition, tacticalPlayerId, tacticalMatchId]);
+  const filteredTacticalPoints = useMemo(() => [
+    ...filteredAveragePoints,
+    ...filteredShotPoints,
+    ...filteredTacklePoints,
+  ], [filteredAveragePoints, filteredShotPoints, filteredTacklePoints]);
+  const activeTacticalPoints = useMemo(() => {
+    if (tacticalMode === 'shot') return filteredShotPoints;
+    if (tacticalMode === 'tackle') return filteredTacklePoints;
+    return filteredAveragePoints;
+  }, [filteredAveragePoints, filteredShotPoints, filteredTacklePoints, tacticalMode]);
+  const tacticalMatchOptions = useMemo(() => {
+    const matchIds = new Set(allTacticalPoints.map(point => point.matchId).filter(Boolean));
+    return teamMatches.filter(match => matchIds.has(match.matchId));
+  }, [allTacticalPoints, teamMatches]);
+  const tacticalPlayerOptions = useMemo(() => {
+    const playerLabels = new Map(players.map(p => [p.playerId, p.name]));
+    allTacticalPoints.forEach(point => {
+      const key = point.playerId || point.playerName;
+      if (key && !playerLabels.has(key)) playerLabels.set(key, point.playerName || key);
+    });
+
+    const playerIds = new Set(allTacticalPoints.map(point => point.playerId || point.playerName).filter(Boolean));
+    return [...playerLabels.entries()]
+      .filter(([playerId]) => playerIds.has(playerId))
+      .map(([playerId, name]) => ({ playerId, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [allTacticalPoints, players]);
+  const selectedTacticalPoint = useMemo(() =>
+    filteredTacticalPoints.find(point => point.id === selectedTacticalPointId) ?? activeTacticalPoints[0] ?? filteredTacticalPoints[0] ?? null,
+  [activeTacticalPoints, filteredTacticalPoints, selectedTacticalPointId]);
+  const tacticalTitle = tacticalMode === 'shot'
+    ? 'Shot map'
+    : tacticalMode === 'tackle'
+      ? 'Tackle map'
+      : 'Posizione media';
+  const tacticalZoneSummary = useMemo(() => {
+    const total = activeTacticalPoints.length;
+    const laneCounts = { Sinistra: 0, Centro: 0, Destra: 0 };
+    const thirdCounts = { 'Terzo difensivo': 0, 'Terzo centrale': 0, 'Terzo offensivo': 0 };
+
+    activeTacticalPoints.forEach(point => {
+      const zone = zoneInfo(point);
+      laneCounts[zone.lane as keyof typeof laneCounts] += 1;
+      thirdCounts[zone.third as keyof typeof thirdCounts] += 1;
+    });
+
+    const toRows = (counts: Record<string, number>) =>
+      Object.entries(counts).map(([label, value]) => ({
+        label,
+        value,
+        percent: total > 0 ? value * 100 / total : 0,
+      }));
+
+    return {
+      total,
+      lanes: toRows(laneCounts),
+      thirds: toRows(thirdCounts),
+    };
+  }, [activeTacticalPoints]);
+  const selectedTacticalZone = selectedTacticalPoint ? zoneInfo(selectedTacticalPoint) : null;
 
   const a = players.find(p => p.name === compareA);
   const b = players.find(p => p.name === compareB);
@@ -333,7 +470,7 @@ export default function Home() {
 
     <nav className="tabs" aria-label="Sezioni dashboard">
       <button className={view === 'player' ? 'active' : ''} onClick={() => setView('player')}>Giocatore</button>
-      {data.role === 'STAFF' && <><button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button><button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button><button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button></>}
+      {data.role === 'STAFF' && <><button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button><button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button><button className={view === 'tactics' ? 'active' : ''} onClick={() => setView('tactics')}>Tattica</button><button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button></>}
     </nav>
 
     {view === 'player' && <>
@@ -399,6 +536,58 @@ export default function Home() {
               </tr>)}
             </tbody>
           </table>
+        </div>
+      </section>
+    </>}
+
+    {view === 'tactics' && data.role === 'STAFF' && <>
+      <section className="hero"><div><p className="eyebrow">TACTICAL ROOM</p><h1>Tattica</h1><p>Posizioni medie, shot map, tackle map e distribuzione per zone.</p></div><div className="heroMeta"><span>Punti filtrati</span><strong>{filteredTacticalPoints.length}</strong></div></section>
+      <section className="panel tacticsControls">
+        <label className="selector">Partita<select value={tacticalMatchId} onChange={e => { setTacticalMatchId(e.target.value); setSelectedTacticalPointId(''); }}>
+          <option value="ALL">Tutte le partite</option>
+          {tacticalMatchOptions.map(match => <option key={match.matchId} value={match.matchId}>{opponentLabel(match.match)} · {match.competition === 'COPPA' ? 'Coppa' : 'Campionato'}</option>)}
+        </select></label>
+        <label className="selector">Giocatore<select value={tacticalPlayerId} onChange={e => { setTacticalPlayerId(e.target.value); setSelectedTacticalPointId(''); }}>
+          <option value="ALL">Tutti i giocatori</option>
+          {tacticalPlayerOptions.map(playerOption => <option key={playerOption.playerId} value={playerOption.playerId}>{playerOption.name}</option>)}
+        </select></label>
+        <label className="selector">Competizione<select value={tacticalCompetition} onChange={e => { setTacticalCompetition(e.target.value as 'ALL' | 'CAMPIONATO' | 'COPPA'); setSelectedTacticalPointId(''); }}>
+          <option value="ALL">Tutte</option>
+          <option value="CAMPIONATO">Campionato</option>
+          <option value="COPPA">Coppa</option>
+        </select></label>
+        <div className="eventFilter"><span>Evento</span><div className="modeButtons">
+          <button type="button" className={tacticalMode === 'average' ? 'active' : ''} onClick={() => { setTacticalMode('average'); setSelectedTacticalPointId(''); }}>Posizioni</button>
+          <button type="button" className={tacticalMode === 'shot' ? 'active' : ''} onClick={() => { setTacticalMode('shot'); setSelectedTacticalPointId(''); }}>Tiri</button>
+          <button type="button" className={tacticalMode === 'tackle' ? 'active' : ''} onClick={() => { setTacticalMode('tackle'); setSelectedTacticalPointId(''); }}>Tackle</button>
+        </div></div>
+      </section>
+      {!allTacticalPoints.length && <section className="panel tablePanel tacticsEmpty"><div className="sectionTitle"><div><span className="eyebrow">SUPABASE</span><h2>Nessun dato tattico</h2></div><span>0 eventi</span></div><p>Appena le tabelle tattiche contengono coordinate valide, questa sezione popolerà automaticamente campo, mappe e zone.</p></section>}
+      <section className="tacticsMaps">
+        <TacticalPitch title="Posizione media" mode="average" points={filteredAveragePoints} selectedId={selectedTacticalPointId} onSelect={point => { setSelectedTacticalPointId(point.id); setTacticalMode(point.kind); }} />
+        <TacticalPitch title="Shot map" mode="shot" points={filteredShotPoints} selectedId={selectedTacticalPointId} onSelect={point => { setSelectedTacticalPointId(point.id); setTacticalMode(point.kind); }} />
+        <TacticalPitch title="Tackle map" mode="tackle" points={filteredTacklePoints} selectedId={selectedTacticalPointId} onSelect={point => { setSelectedTacticalPointId(point.id); setTacticalMode(point.kind); }} />
+      </section>
+      <section className="tacticsInfoGrid">
+        <div className="panel tablePanel zonePanel">
+          <div className="sectionTitle"><div><span className="eyebrow">ZONE</span><h2>Riepilogo zone</h2></div><span>{tacticalTitle}</span></div>
+          <div className="zoneGroups">
+            <div className="zoneGroup"><h3>Sinistra / centro / destra</h3>{tacticalZoneSummary.lanes.map(row => <div className="zoneRow" key={row.label}><div><span>{row.label}</span><strong>{int(row.value)}</strong></div><i><b style={{ width: `${row.percent}%` }} /></i><small>{fmt(row.percent, 0)}%</small></div>)}</div>
+            <div className="zoneGroup"><h3>Terzi campo</h3>{tacticalZoneSummary.thirds.map(row => <div className="zoneRow" key={row.label}><div><span>{row.label}</span><strong>{int(row.value)}</strong></div><i><b style={{ width: `${row.percent}%` }} /></i><small>{fmt(row.percent, 0)}%</small></div>)}</div>
+          </div>
+        </div>
+        <div className="panel tablePanel pointDetail">
+          <div className="sectionTitle"><div><span className="eyebrow">DETTAGLIO</span><h2>Punto selezionato</h2></div><span>{selectedTacticalPoint ? tacticalKindLabel(selectedTacticalPoint.kind) : '—'}</span></div>
+          {selectedTacticalPoint ? <div className="detailRows">
+            <div><span>Giocatore</span><strong>{selectedTacticalPoint.playerName || selectedTacticalPoint.playerId || '—'}</strong></div>
+            <div><span>Partita</span><strong>{opponentLabel(selectedTacticalPoint.match || '—')}</strong></div>
+            <div><span>Evento</span><strong>{tacticalKindLabel(selectedTacticalPoint.kind)}</strong></div>
+            <div><span>Minuto</span><strong>{selectedTacticalPoint.minute !== null ? `${int(selectedTacticalPoint.minute)}'` : '—'}</strong></div>
+            <div><span>Esito</span><strong>{selectedTacticalPoint.outcome || '—'}</strong></div>
+            <div><span>Zona laterale</span><strong>{selectedTacticalZone?.lane ?? '—'}</strong></div>
+            <div><span>Terzo</span><strong>{selectedTacticalZone?.third ?? '—'}</strong></div>
+            <div><span>Coordinate</span><strong>{fmt(selectedTacticalPoint.x, 1)} · {fmt(selectedTacticalPoint.y, 1)}</strong></div>
+          </div> : <p className="detailEmpty">Seleziona un punto su una delle mappe.</p>}
         </div>
       </section>
     </>}

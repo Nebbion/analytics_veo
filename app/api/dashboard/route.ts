@@ -71,6 +71,236 @@ const redCardKeys = ['espulsioni', 'espulsione', 'cartellini_rossi', 'rossi', 'c
 const per90 = (value: number, minutes: number) =>
   minutes > 0 ? value * 90 / minutes : 0;
 
+type TacticalKind = 'average' | 'shot' | 'tackle';
+
+type TacticalPoint = {
+  id: string;
+  kind: TacticalKind;
+  matchId: string;
+  match: string;
+  date: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  playerId: string;
+  playerName: string;
+  x: number;
+  y: number;
+  minute: number | null;
+  outcome: string;
+};
+
+type TacticalData = {
+  averagePositions: TacticalPoint[];
+  shots: TacticalPoint[];
+  tackles: TacticalPoint[];
+  source: 'supabase' | 'none';
+};
+
+const emptyTacticalData = (): TacticalData => ({
+  averagePositions: [],
+  shots: [],
+  tackles: [],
+  source: 'none',
+});
+
+const normalizeKey = (key: string) =>
+  key.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const rowValue = (row: Record<string, unknown>, keys: string[]) => {
+  const normalized = new Map(
+    Object.entries(row).map(([key, value]) => [normalizeKey(key), value])
+  );
+
+  for (const key of keys) {
+    const value = normalized.get(normalizeKey(key));
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+
+  return undefined;
+};
+
+const rowText = (row: Record<string, unknown>, keys: string[]) => {
+  const value = rowValue(row, keys);
+  return value === undefined ? '' : String(value).trim();
+};
+
+const rowNumber = (row: Record<string, unknown>, keys: string[]) => {
+  const value = rowValue(row, keys);
+  if (value === undefined) return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const rowsFromUnknown = (value: unknown): Record<string, unknown>[] => {
+  if (!Array.isArray(value)) return [];
+  if (!value.length) return [];
+
+  if (value.every(item => item && typeof item === 'object' && !Array.isArray(item))) {
+    return value as Record<string, unknown>[];
+  }
+
+  const [headers, ...rows] = value;
+  if (!Array.isArray(headers) || !headers.every(header => typeof header === 'string')) return [];
+
+  return rows
+    .filter(row => Array.isArray(row))
+    .map(row => Object.fromEntries(
+      headers.map((header, index) => [header, (row as unknown[])[index]])
+    ));
+};
+
+const collectRowsByKeys = (
+  value: unknown,
+  wantedKeys: string[],
+  depth = 0
+): Record<string, unknown>[] => {
+  if (!value || typeof value !== 'object' || depth > 4) return [];
+  const rows: Record<string, unknown>[] = [];
+
+  if (Array.isArray(value)) {
+    return rowsFromUnknown(value);
+  }
+
+  Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+    const normalized = normalizeKey(key);
+    if (wantedKeys.some(wanted => normalizeKey(wanted) === normalized)) {
+      rows.push(...rowsFromUnknown(child));
+    }
+
+    if (child && typeof child === 'object') {
+      rows.push(...collectRowsByKeys(child, wantedKeys, depth + 1));
+    }
+  });
+
+  return rows;
+};
+
+const classifyTacticalKind = (row: Record<string, unknown>, fallback: TacticalKind): TacticalKind => {
+  const label = rowText(row, ['kind', 'type', 'tipo', 'evento', 'event', 'categoria', 'azione']).toLowerCase();
+  if (/tackle|contrasto|duello/.test(label)) return 'tackle';
+  if (/shot|tiro|conclusione/.test(label)) return 'shot';
+  if (/media|average|posizione|position/.test(label)) return 'average';
+  return fallback;
+};
+
+const normalizeTacticalPoints = (
+  rows: Record<string, unknown>[],
+  fallbackKind: TacticalKind,
+  allMatches: MatchRow[],
+  playerNameMap: Map<string, string>
+) => {
+  const matchMap = new Map(allMatches.map(match => [match.match_id, match]));
+  const rawPoints = rows.map((row, index) => {
+    const matchId = rowText(row, ['match_id', 'matchId', 'id_partita', 'partita_id', 'gara_id']);
+    const match = matchMap.get(matchId);
+    const playerId = rowText(row, ['player_id', 'playerId', 'Player_ID', 'id_giocatore', 'giocatore_id']);
+    const playerName = rowText(row, ['player_name', 'playerName', 'nome_giocatore', 'giocatore', 'player', 'nome']) || playerNameMap.get(playerId) || '';
+
+    return {
+      id: `${fallbackKind}-${matchId || 'match'}-${playerId || playerName || 'player'}-${index}`,
+      kind: classifyTacticalKind(row, fallbackKind),
+      matchId,
+      match: match?.partita ?? rowText(row, ['match', 'partita', 'gara', 'avversario', 'opponent']),
+      date: match?.data ?? rowText(row, ['date', 'data']),
+      competition: (/coppa/i.test(rowText(row, ['competizione', 'competition', 'torneo', 'tipo_partita', 'categoria']))
+        ? 'COPPA'
+        : competitionLabel(match)) as 'CAMPIONATO' | 'COPPA',
+      playerId,
+      playerName,
+      rawX: rowNumber(row, ['x', 'x_pct', 'x_percent', 'x_percentuale', 'coord_x', 'pos_x', 'x_pos', 'x_position', 'media_x', 'x_media']),
+      rawY: rowNumber(row, ['y', 'y_pct', 'y_percent', 'y_percentuale', 'coord_y', 'pos_y', 'y_pos', 'y_position', 'media_y', 'y_media']),
+      minute: rowNumber(row, ['minute', 'minuto', 'min']),
+      outcome: rowText(row, ['outcome', 'esito', 'risultato', 'result', 'successo']),
+    };
+  }).filter(point => point.rawX !== null && point.rawY !== null);
+
+  const xLooksMetric = rawPoints.some(point => Number(point.rawX) > 100);
+  const yLooksMetric = xLooksMetric && rawPoints.every(point => Number(point.rawY) <= 68);
+
+  return rawPoints.map(point => ({
+    id: point.id,
+    kind: point.kind,
+    matchId: point.matchId,
+    match: point.match,
+    date: point.date,
+    competition: point.competition,
+    playerId: point.playerId,
+    playerName: point.playerName,
+    x: Math.max(0, Math.min(100, xLooksMetric ? Number(point.rawX) / 105 * 100 : Number(point.rawX))),
+    y: Math.max(0, Math.min(100, yLooksMetric ? Number(point.rawY) / 68 * 100 : Number(point.rawY))),
+    minute: point.minute,
+    outcome: point.outcome,
+  }));
+};
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+const tacticalTableCandidates: { table: string; kind: TacticalKind }[] = [
+  { table: 'player_average_positions', kind: 'average' },
+  { table: 'tactical_average_positions', kind: 'average' },
+  { table: 'average_positions', kind: 'average' },
+  { table: 'posizioni_medie', kind: 'average' },
+  { table: 'player_shots', kind: 'shot' },
+  { table: 'tactical_shots', kind: 'shot' },
+  { table: 'shot_map', kind: 'shot' },
+  { table: 'mappa_tiri', kind: 'shot' },
+  { table: 'player_tackles', kind: 'tackle' },
+  { table: 'tactical_tackles', kind: 'tackle' },
+  { table: 'tackle_map', kind: 'tackle' },
+  { table: 'mappa_contrasti', kind: 'tackle' },
+  { table: 'tactical_events', kind: 'average' },
+  { table: 'player_tactical_events', kind: 'average' },
+  { table: 'eventi_tattici', kind: 'average' },
+  { table: 'tattica', kind: 'average' },
+];
+
+async function fetchTacticalData(
+  supabase: SupabaseServerClient,
+  isStaff: boolean,
+  ownPlayerId: string,
+  allMatches: MatchRow[],
+  playerNameMap: Map<string, string>
+): Promise<TacticalData> {
+  const results = await Promise.all(
+    tacticalTableCandidates.map(async candidate => {
+      const { data, error } = await supabase
+        .from(candidate.table)
+        .select('*')
+        .limit(2000);
+
+      if (error || !data) return { ...candidate, rows: [] as Record<string, unknown>[] };
+      return { ...candidate, rows: data as Record<string, unknown>[] };
+    })
+  );
+
+  const points = results.flatMap(result =>
+    normalizeTacticalPoints(result.rows, result.kind, allMatches, playerNameMap)
+  );
+
+  const visiblePoints = isStaff
+    ? points
+    : points.filter(point => point.playerId === ownPlayerId);
+
+  const dedupedPoints = [
+    ...new Map(
+      visiblePoints.map(point => [
+        `${point.kind}:${point.matchId}:${point.playerId}:${point.x}:${point.y}:${point.minute ?? ''}:${point.outcome}`,
+        point,
+      ])
+    ).values(),
+  ];
+
+  const data = {
+    averagePositions: dedupedPoints.filter(point => point.kind === 'average'),
+    shots: dedupedPoints.filter(point => point.kind === 'shot'),
+    tackles: dedupedPoints.filter(point => point.kind === 'tackle'),
+    source: 'supabase' as const,
+  };
+
+  if (data.averagePositions.length || data.shots.length || data.tackles.length) return data;
+
+  return emptyTacticalData();
+}
+
 export async function GET() {
   const supabase = await createClient();
 
@@ -197,6 +427,14 @@ export async function GET() {
     allPlayers.map(p => [p.player_id, p.nome])
   );
 
+  const tactics = await fetchTacticalData(
+    supabase,
+    isStaff,
+    ownPlayerId,
+    allMatches,
+    playerNameMap
+  );
+
   const matchMap = new Map(
     allMatches.map(m => [m.match_id, m])
   );
@@ -307,6 +545,7 @@ export async function GET() {
       players,
       matches,
       teamMatches,
+      tactics,
       source: 'supabase',
     },
     {
