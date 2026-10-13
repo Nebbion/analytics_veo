@@ -85,6 +85,7 @@ type TacticalPoint = {
   playerName: string;
   x: number;
   y: number;
+  jerseyNumber: number | null;
   minute: number | null;
   outcome: string;
   weight?: number;
@@ -171,8 +172,9 @@ const normalizeTacticalPoints = (
         : competitionLabel(match)) as 'CAMPIONATO' | 'COPPA',
       playerId,
       playerName,
-      rawX: rowNumber(row, ['x', 'x_pct', 'x_percent', 'x_percentuale', 'coord_x', 'coordinate_x', 'location_x', 'start_x', 'end_x', 'pos_x', 'x_pos', 'x_position', 'media_x', 'x_media']),
-      rawY: rowNumber(row, ['y', 'y_pct', 'y_percent', 'y_percentuale', 'coord_y', 'coordinate_y', 'location_y', 'start_y', 'end_y', 'pos_y', 'y_pos', 'y_position', 'media_y', 'y_media']),
+      rawX: rowNumber(row, ['x_media_pct', 'x', 'x_pct', 'x_percent', 'x_percentuale', 'coord_x', 'coordinate_x', 'location_x', 'start_x', 'end_x', 'pos_x', 'x_pos', 'x_position', 'media_x', 'x_media']),
+      rawY: rowNumber(row, ['y_media_pct', 'y', 'y_pct', 'y_percent', 'y_percentuale', 'coord_y', 'coordinate_y', 'location_y', 'start_y', 'end_y', 'pos_y', 'y_pos', 'y_position', 'media_y', 'y_media']),
+      jerseyNumber: rowNumber(row, ['numero', 'numero_maglia', 'jersey_number', 'shirt_number']),
       minute: rowNumber(row, ['minute', 'minuto', 'min']),
       outcome: rowText(row, ['outcome', 'esito', 'esito_evento', 'risultato', 'result', 'successo']) || rowText(row, ['tipo_evento', 'event_type', 'evento', 'event']),
       weight: rowNumber(row, ['count', 'events', 'total_events', 'totale', 'n']) ?? 1,
@@ -196,6 +198,7 @@ const normalizeTacticalPoints = (
     playerName: point.playerName,
     x: Math.max(0, Math.min(100, xLooksMetric ? Number(point.rawX) / 105 * 100 : xLooksFraction ? Number(point.rawX) * 100 : Number(point.rawX))),
     y: Math.max(0, Math.min(100, yLooksMetric ? Number(point.rawY) / 68 * 100 : yLooksFraction ? Number(point.rawY) * 100 : Number(point.rawY))),
+    jerseyNumber: point.jerseyNumber,
     minute: point.minute,
     outcome: point.outcome,
     weight: point.weight,

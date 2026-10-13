@@ -33,6 +33,7 @@ type TacticalPoint = {
   playerName: string;
   x: number;
   y: number;
+  jerseyNumber: number | null;
   minute: number | null;
   outcome: string;
 };
@@ -149,11 +150,11 @@ function TacticalPitch({ title, points, mode, selectedId, onSelect }: { title: s
       <rect x="93.5" y="24.84" width="5.5" height="18.32" className="pitchLine noFill" />
       <circle cx="11" cy="34" r="0.6" className="pitchFill" />
       <circle cx="89" cy="34" r="0.6" className="pitchFill" />
-      {points.map((point, index) => {
+      {points.map((point) => {
         const pitchY = point.y * 0.68;
         return <g key={point.id} className={`tacticalPoint ${pointClass} ${point.id === selectedId ? 'selectedPoint' : ''}`} onClick={() => onSelect(point)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(point); } }} tabIndex={0} role="button" aria-label={`${point.playerName || 'Giocatore'} ${point.outcome || ''}`}>
           <circle cx={point.x} cy={pitchY} r={point.id === selectedId ? 2.7 : mode === 'average' ? 2.4 : 1.9} />
-          {mode === 'average' && <text x={point.x} y={pitchY + 0.9} textAnchor="middle">{index + 1}</text>}
+          {mode === 'average' && <text x={point.x} y={pitchY + 0.9} textAnchor="middle">{point.jerseyNumber ?? '?'}</text>}
           <title>{point.playerName || 'Giocatore'} · {point.match || 'Partita'}{point.minute !== null ? ` · ${point.minute}'` : ''}{point.outcome ? ` · ${point.outcome}` : ''}</title>
         </g>;
       })}
