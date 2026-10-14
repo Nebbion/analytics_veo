@@ -86,6 +86,26 @@ function Stat({ label, value, suffix = '' }: { label: string; value: string | nu
   return <div className="stat"><span>{label}</span><strong>{value}{suffix}</strong></div>;
 }
 
+const hasPlayerTechnicalData = (player: Player) =>
+  player.shots > 0 ||
+  player.passes > 0 ||
+  player.completedPasses > 0 ||
+  player.distanceKm > 0 ||
+  player.sprints > 0 ||
+  player.highIntensityRuns > 0 ||
+  player.maxSpeed > 0 ||
+  player.averageSpeed > 0;
+
+const hasCompetitionTechnicalData = (stats: PlayerCompetitionStats) =>
+  stats.shots > 0 ||
+  stats.passes > 0 ||
+  stats.completedPasses > 0 ||
+  stats.distanceKm > 0 ||
+  stats.sprints > 0 ||
+  stats.highIntensityRuns > 0 ||
+  stats.maxSpeed > 0 ||
+  stats.averageSpeed > 0;
+
 function LineChart({ title, values, unit, color = 'green' }: { title: string; values: { label: string; value: number }[]; unit: string; color?: 'green' | 'neutral' }) {
   const width = 760, height = 190, padX = 34, padY = 26;
   if (!values.length) return <div className="chartEmpty">Nessun dato disponibile.</div>;
@@ -120,19 +140,22 @@ function DisciplineRankTable({ title, rows, metricLabel }: { title: string; rows
 }
 
 function PlayerCompetitionPanel({ stats }: { stats: PlayerCompetitionStats }) {
+  const hasTechnicalData = hasCompetitionTechnicalData(stats);
+
   return <section className="panel tablePanel competitionPanel"><div className="sectionTitle"><div><span className="eyebrow">COMPETIZIONE</span><h2>{stats.label}</h2></div><span>{int(stats.appearances)} gare</span></div><div className="compactStatsGrid">
     <Stat label="Minuti" value={int(stats.minutes)} />
+    <Stat label="Minuti / gara" value={stats.appearances > 0 ? fmt(stats.minutes / stats.appearances, 1) : '—'} />
     <Stat label="Gol" value={int(stats.goals)} />
-    <Stat label="Assist" value={int(stats.assists)} />
-    <Stat label="Tiri" value={int(stats.shots)} />
-    <Stat label="Tiri / 90" value={fmt(stats.shotsPer90, 2)} />
-    <Stat label="Passaggi %" value={fmt(stats.passSuccess, 1)} suffix="%" />
-    <Stat label="Distanza" value={fmt(stats.distanceKm, 1)} suffix=" km" />
-    <Stat label="Distanza / 90" value={fmt(stats.distancePer90, 1)} suffix=" km" />
-    <Stat label="Sprint / 90" value={fmt(stats.sprintsPer90, 2)} />
-    <Stat label="Alta intensità / 90" value={fmt(stats.highIntensityRunsPer90, 2)} />
-    <Stat label="Ammonizioni" value={int(stats.yellowCards)} />
-    <Stat label="Espulsioni" value={int(stats.redCards)} />
+    {stats.assists > 0 && <Stat label="Assist" value={int(stats.assists)} />}
+    {stats.yellowCards > 0 && <Stat label="Ammonizioni" value={int(stats.yellowCards)} />}
+    {stats.redCards > 0 && <Stat label="Espulsioni" value={int(stats.redCards)} />}
+    {hasTechnicalData && stats.shots > 0 && <Stat label="Tiri" value={int(stats.shots)} />}
+    {hasTechnicalData && stats.shots > 0 && <Stat label="Tiri / 90" value={fmt(stats.shotsPer90, 2)} />}
+    {hasTechnicalData && stats.passes > 0 && <Stat label="Passaggi %" value={fmt(stats.passSuccess, 1)} suffix="%" />}
+    {hasTechnicalData && stats.distanceKm > 0 && <Stat label="Distanza" value={fmt(stats.distanceKm, 1)} suffix=" km" />}
+    {hasTechnicalData && stats.distanceKm > 0 && <Stat label="Distanza / 90" value={fmt(stats.distancePer90, 1)} suffix=" km" />}
+    {hasTechnicalData && stats.sprints > 0 && <Stat label="Sprint / 90" value={fmt(stats.sprintsPer90, 2)} />}
+    {hasTechnicalData && stats.highIntensityRuns > 0 && <Stat label="Alta intensità / 90" value={fmt(stats.highIntensityRunsPer90, 2)} />}
   </div></section>;
 }
 
@@ -490,28 +513,42 @@ export default function Home() {
       {player && <>
         <section className="profile panel"><div><span className="eyebrow">PROFILO</span><h2>{player.name}</h2><p>{player.appearances} presenze · {int(player.minutes)} minuti</p></div><div className="profileHighlight"><span>GOL / 90</span><strong>{fmt(player.goalsPer90, 2)}</strong></div></section>
         <section className="statsGrid">
-          <Stat label="Presenze" value={int(player.appearances)} /><Stat label="Minuti" value={int(player.minutes)} /><Stat label="Gol" value={int(player.goals)} /><Stat label="Gol / 90" value={fmt(player.goalsPer90, 2)} />
-          <Stat label="Tiri" value={int(player.shots)} /><Stat label="Tiri / 90" value={fmt(player.shotsPer90, 2)} /><Stat label="Passaggi" value={int(player.passes)} /><Stat label="Passaggi completati" value={int(player.completedPasses)} />
-          <Stat label="Passaggi %" value={fmt(player.passSuccess, 1)} suffix="%" /><Stat label="Distanza" value={fmt(player.distanceKm, 1)} suffix=" km" /><Stat label="Sprint" value={int(player.sprints)} /><Stat label="Alta intensità" value={int(player.highIntensityRuns)} />
-          <Stat label="Velocità max" value={fmt(player.maxSpeed, 1)} suffix=" km/h" /><Stat label="Velocità media" value={fmt(player.averageSpeed, 1)} suffix=" km/h" /><Stat label="Distanza / 90" value={fmt(player.distancePer90, 1)} suffix=" km" /><Stat label="Minuti / presenza" value={fmt(player.minutesPerAppearance, 1)} />
+          <Stat label="Presenze" value={int(player.appearances)} /><Stat label="Minuti" value={int(player.minutes)} /><Stat label="Minuti / presenza" value={fmt(player.minutesPerAppearance, 1)} /><Stat label="Gol" value={int(player.goals)} />
+          <Stat label="Gol / 90" value={fmt(player.goalsPer90, 2)} />{player.assists > 0 && <Stat label="Assist" value={int(player.assists)} />}{player.yellowCards > 0 && <Stat label="Ammonizioni" value={int(player.yellowCards)} />}{player.redCards > 0 && <Stat label="Espulsioni" value={int(player.redCards)} />}
         </section>
+        {hasPlayerTechnicalData(player) && <section className="panel tablePanel advancedStats">
+          <div className="sectionTitle"><div><span className="eyebrow">DATI TECNICI</span><h2>Tracking disponibile</h2></div><span>Veo</span></div>
+          <div className="statsGrid advancedGrid">
+            {player.shots > 0 && <Stat label="Tiri" value={int(player.shots)} />}
+            {player.shots > 0 && <Stat label="Tiri / 90" value={fmt(player.shotsPer90, 2)} />}
+            {player.passes > 0 && <Stat label="Passaggi" value={int(player.passes)} />}
+            {player.completedPasses > 0 && <Stat label="Passaggi completati" value={int(player.completedPasses)} />}
+            {player.passes > 0 && <Stat label="Passaggi %" value={fmt(player.passSuccess, 1)} suffix="%" />}
+            {player.distanceKm > 0 && <Stat label="Distanza" value={fmt(player.distanceKm, 1)} suffix=" km" />}
+            {player.distanceKm > 0 && <Stat label="Distanza / 90" value={fmt(player.distancePer90, 1)} suffix=" km" />}
+            {player.sprints > 0 && <Stat label="Sprint" value={int(player.sprints)} />}
+            {player.highIntensityRuns > 0 && <Stat label="Alta intensità" value={int(player.highIntensityRuns)} />}
+            {player.maxSpeed > 0 && <Stat label="Velocità max" value={fmt(player.maxSpeed, 1)} suffix=" km/h" />}
+            {player.averageSpeed > 0 && <Stat label="Velocità media" value={fmt(player.averageSpeed, 1)} suffix=" km/h" />}
+          </div>
+        </section>}
         <div className="twoCol competitionSplit"><PlayerCompetitionPanel stats={playerCompetitionStats.campionato} /><PlayerCompetitionPanel stats={playerCompetitionStats.coppa} /></div>
-        <section className="panel tablePanel advancedStats">
+        {hasPlayerTechnicalData(player) && <section className="panel tablePanel advancedStats">
           <div className="sectionTitle"><div><span className="eyebrow">ANALISI STAGIONALE</span><h2>Indicatori avanzati</h2></div><span>stagione</span></div>
           <div className="statsGrid advancedGrid">
-            <Stat label="Passaggi / 90" value={fmt(player.passesPer90, 2)} />
-            <Stat label="Passaggi completati / 90" value={fmt(player.completedPassesPer90, 2)} />
-            <Stat label="Sprint / 90" value={fmt(player.sprintsPer90, 2)} />
-            <Stat label="Alta intensità / 90" value={fmt(player.highIntensityRunsPer90, 2)} />
-            <Stat label="Sprint / km" value={fmt(player.sprintsPerKm, 2)} />
-            <Stat label="Alta intensità / km" value={fmt(player.highIntensityRunsPerKm, 2)} />
-            <Stat label="Gol / tiro" value={fmt(player.goalsPerShot, 2)} />
+            {player.passes > 0 && <Stat label="Passaggi / 90" value={fmt(player.passesPer90, 2)} />}
+            {player.completedPasses > 0 && <Stat label="Passaggi completati / 90" value={fmt(player.completedPassesPer90, 2)} />}
+            {player.sprints > 0 && <Stat label="Sprint / 90" value={fmt(player.sprintsPer90, 2)} />}
+            {player.highIntensityRuns > 0 && <Stat label="Alta intensità / 90" value={fmt(player.highIntensityRunsPer90, 2)} />}
+            {player.sprints > 0 && player.distanceKm > 0 && <Stat label="Sprint / km" value={fmt(player.sprintsPerKm, 2)} />}
+            {player.highIntensityRuns > 0 && player.distanceKm > 0 && <Stat label="Alta intensità / km" value={fmt(player.highIntensityRunsPerKm, 2)} />}
+            {player.shots > 0 && <Stat label="Gol / tiro" value={fmt(player.goalsPerShot, 2)} />}
             <Stat label="Minuti / gol" value={player.goals > 0 ? fmt(player.minutesPerGoal, 1) : '—'} />
-            <Stat label="Minuti / tiro" value={fmt(player.minutesPerShot, 1)} />
+            {player.shots > 0 && <Stat label="Minuti / tiro" value={fmt(player.minutesPerShot, 1)} />}
           </div>
-        </section>
-        {data.role === 'GIOCATORE' ? <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">PARTITE</span><h2>Partite generali</h2></div><span>{generalPlayerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Presenza</th><th>Min</th><th>Gol</th><th>Tiri</th><th>Passaggi %</th><th>Distanza</th><th>Report</th></tr></thead><tbody>{generalPlayerMatches.map((m, i) => { const s = m.stats; return <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{s ? 'Sì' : 'Non impiegato'}</td><td>{s ? int(s.minutes) : '—'}</td><td>{s ? int(s.goals) : '—'}</td><td>{s ? int(s.shots) : '—'}</td><td>{s ? `${fmt(s.passSuccess, 1)}%` : '—'}</td><td>{s ? `${fmt(s.distanceKm, 1)} km` : '—'}</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>; })}</tbody></table></div></section> : <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">MATCH LOG</span><h2>Partite</h2></div><span>{playerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Min</th><th>Gol</th><th>Tiri</th><th>Passaggi %</th><th>Distanza</th><th>V. max</th><th>Report</th></tr></thead><tbody>{playerMatches.map((m, i) => <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{int(m.minutes)}</td><td>{int(m.goals)}</td><td>{int(m.shots)}</td><td>{fmt(m.passSuccess, 1)}%</td><td>{fmt(m.distanceKm, 1)} km</td><td>{fmt(m.maxSpeed, 1)} km/h</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>)}</tbody></table></div></section>}
-        <section className="chartsGrid"><LineChart title="Minuti per partita" unit="min" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.minutes }))} /><LineChart title="Distanza per partita" unit="km" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.distanceKm }))} /><LineChart title="Velocità massima" unit="km/h" color="neutral" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.maxSpeed }))} /></section>
+        </section>}
+        {data.role === 'GIOCATORE' ? <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">PARTITE</span><h2>Partite generali</h2></div><span>{generalPlayerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Presenza</th><th>Min</th><th>Gol</th><th>Assist</th><th>Amm.</th><th>Esp.</th><th>Report</th></tr></thead><tbody>{generalPlayerMatches.map((m, i) => { const s = m.stats; return <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{s ? 'Sì' : 'Non impiegato'}</td><td>{s ? int(s.minutes) : '—'}</td><td>{s && s.goals > 0 ? int(s.goals) : '—'}</td><td>{s && s.assists > 0 ? int(s.assists) : '—'}</td><td>{s && s.yellowCards > 0 ? int(s.yellowCards) : '—'}</td><td>{s && s.redCards > 0 ? int(s.redCards) : '—'}</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>; })}</tbody></table></div></section> : <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">MATCH LOG</span><h2>Partite</h2></div><span>{playerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Min</th><th>Gol</th><th>Assist</th><th>Amm.</th><th>Esp.</th><th>Report</th></tr></thead><tbody>{playerMatches.map((m, i) => <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{int(m.minutes)}</td><td>{m.goals > 0 ? int(m.goals) : '—'}</td><td>{m.assists > 0 ? int(m.assists) : '—'}</td><td>{m.yellowCards > 0 ? int(m.yellowCards) : '—'}</td><td>{m.redCards > 0 ? int(m.redCards) : '—'}</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>)}</tbody></table></div></section>}
+        <section className="chartsGrid"><LineChart title="Minuti per partita" unit="min" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.minutes }))} /><LineChart title="Gol per partita" unit="gol" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.goals }))} /><LineChart title="Cartellini per partita" unit="cartellini" color="neutral" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.yellowCards + m.redCards }))} /></section>
       </>}
     </>}
 
