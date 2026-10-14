@@ -284,34 +284,45 @@ export default function Home() {
   }, [players, matches, teamMatches]);
 
   const team = useMemo(() => {
+    const playedMatchIds = new Set(matches.map(m => m.matchId).filter(Boolean));
+    const playedMatches = playedMatchIds.size || teamMatches.length;
+    const usedPlayers = players.filter(p => p.minutes > 0 || p.appearances > 0).length;
     const totalMinutes = players.reduce((s, p) => s + p.minutes, 0);
+    const totalAppearances = players.reduce((s, p) => s + p.appearances, 0);
+    const goals = players.reduce((s, p) => s + p.goals, 0);
+    const assists = players.reduce((s, p) => s + p.assists, 0);
+    const yellowCards = players.reduce((s, p) => s + p.yellowCards, 0);
+    const redCards = players.reduce((s, p) => s + p.redCards, 0);
+    const cards = yellowCards + redCards;
+
     return {
       players: players.length,
-      goals: players.reduce((s, p) => s + p.goals, 0),
-      assists: players.reduce((s, p) => s + p.assists, 0),
-      yellowCards: players.reduce((s, p) => s + p.yellowCards, 0),
-      redCards: players.reduce((s, p) => s + p.redCards, 0),
-      shots: players.reduce((s, p) => s + p.shots, 0),
-      passes: players.reduce((s, p) => s + p.passes, 0),
-      completedPasses: players.reduce((s, p) => s + p.completedPasses, 0),
-      distance: players.reduce((s, p) => s + p.distanceKm, 0),
-      sprints: players.reduce((s, p) => s + p.sprints, 0),
-      highIntensity: players.reduce((s, p) => s + p.highIntensityRuns, 0),
-      maxSpeed: Math.max(...players.map(p => p.maxSpeed), 0),
-      passSuccess: players.reduce((s, p) => s + p.passes, 0) > 0 ? players.reduce((s, p) => s + p.completedPasses, 0) / players.reduce((s, p) => s + p.passes, 0) * 100 : 0,
+      usedPlayers,
+      playedMatches,
+      totalAppearances,
       totalMinutes,
+      goals,
+      assists,
+      yellowCards,
+      redCards,
+      cards,
+      goalsPerMatch: playedMatches > 0 ? goals / playedMatches : 0,
+      assistsPerMatch: playedMatches > 0 ? assists / playedMatches : 0,
+      cardsPerMatch: playedMatches > 0 ? cards / playedMatches : 0,
+      minutesPerUsedPlayer: usedPlayers > 0 ? totalMinutes / usedPlayers : 0,
+      minutesPerAppearance: totalAppearances > 0 ? totalMinutes / totalAppearances : 0,
     };
-  }, [players]);
+  }, [players, matches, teamMatches]);
 
   const matchSummary = useMemo(() => {
-    const map = new Map<string, { date: string; match: string; goals: number; shots: number; distance: number; minutes: number; passes: number }>();
+    const map = new Map<string, { date: string; match: string; goals: number; assists: number; cards: number; minutes: number; appearances: number }>();
     matches.forEach(m => {
-      const current = map.get(m.matchId) ?? { date: m.date, match: m.match, goals: 0, shots: 0, distance: 0, minutes: 0, passes: 0 };
+      const current = map.get(m.matchId) ?? { date: m.date, match: m.match, goals: 0, assists: 0, cards: 0, minutes: 0, appearances: 0 };
       current.goals += m.goals;
-      current.shots += m.shots;
-      current.distance += m.distanceKm;
+      current.assists += m.assists;
+      current.cards += m.yellowCards + m.redCards;
       current.minutes += m.minutes;
-      current.passes += m.passes;
+      if (m.minutes > 0) current.appearances += 1;
       map.set(m.matchId, current);
     });
     return [...map.values()].sort((a,b) => a.date.localeCompare(b.date));
@@ -319,11 +330,8 @@ export default function Home() {
 
   const rankings = useMemo(() => ({
     goals90: [...players].sort((a,b) => b.goalsPer90 - a.goalsPer90).map(p => ({name:p.name,value:p.goalsPer90})),
-    speed: [...players].sort((a,b) => b.maxSpeed - a.maxSpeed).map(p => ({name:p.name,value:p.maxSpeed})),
-    sprints90: [...players]
-      .filter(p => p.minutes > 0)
-      .sort((a,b) => b.sprintsPer90 - a.sprintsPer90 || a.name.localeCompare(b.name, 'it'))
-      .map(p => ({name:p.name,value:p.sprintsPer90})),
+    minutes: [...players].sort((a,b) => b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.minutes})),
+    appearances: [...players].sort((a,b) => b.appearances - a.appearances || b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.appearances})),
   }), [players]);
   const competitionRankings = useMemo(() => {
     const playerNameById = new Map(players.map(p => [p.playerId, p.name]));
@@ -508,18 +516,18 @@ export default function Home() {
     </>}
 
     {view === 'team' && <>
-      <section className="hero"><div><p className="eyebrow">TEAM CENTER</p><h1>Dashboard squadra</h1><p>Panoramica aggregata delle statistiche della rosa.</p></div><div className="heroMeta"><span>Giocatori con dati</span><strong>{team.players}</strong></div></section>
+      <section className="hero"><div><p className="eyebrow">TEAM CENTER</p><h1>Dashboard squadra</h1><p>Fotografia aggiornata della rosa: utilizzo, produzione offensiva e disciplina.</p></div><div className="heroMeta"><span>Partite con dati</span><strong>{team.playedMatches}</strong></div></section>
       <section className="statsGrid">
-        <Stat label="Gol" value={int(team.goals)} /><Stat label="Assist" value={int(team.assists)} /><Stat label="Ammonizioni" value={int(team.yellowCards)} /><Stat label="Espulsioni" value={int(team.redCards)} />
-        <Stat label="Tiri" value={int(team.shots)} /><Stat label="Passaggi" value={int(team.passes)} /><Stat label="Passaggi %" value={fmt(team.passSuccess,1)} suffix="%" /><Stat label="Distanza" value={fmt(team.distance,1)} suffix=" km" />
-        <Stat label="Sprint" value={int(team.sprints)} /><Stat label="Alta intensità" value={int(team.highIntensity)} /><Stat label="Velocità max" value={fmt(team.maxSpeed,1)} suffix=" km/h" />
+        <Stat label="Rosa utilizzata" value={`${int(team.usedPlayers)}/${int(team.players)}`} /><Stat label="Presenze totali" value={int(team.totalAppearances)} /><Stat label="Minuti squadra" value={int(team.totalMinutes)} /><Stat label="Minuti / presenza" value={fmt(team.minutesPerAppearance, 1)} />
+        <Stat label="Gol" value={int(team.goals)} /><Stat label="Gol / partita" value={fmt(team.goalsPerMatch, 2)} /><Stat label="Assist" value={int(team.assists)} /><Stat label="Assist / partita" value={fmt(team.assistsPerMatch, 2)} />
+        <Stat label="Ammonizioni" value={int(team.yellowCards)} /><Stat label="Espulsioni" value={int(team.redCards)} /><Stat label="Cartellini / partita" value={fmt(team.cardsPerMatch, 2)} /><Stat label="Minuti medi / giocatore" value={fmt(team.minutesPerUsedPlayer, 0)} />
       </section>
       <div className="twoCol"><RankTable title="Gol campionato" metricLabel="totale" rows={competitionRankings.campionato.goals} /><RankTable title="Assist campionato" metricLabel="totale" rows={competitionRankings.campionato.assists} /></div>
       <div className="twoCol"><RankTable title="Gol coppa" metricLabel="totale" rows={competitionRankings.coppa.goals} /><RankTable title="Assist coppa" metricLabel="totale" rows={competitionRankings.coppa.assists} /></div>
       <div className="twoCol"><DisciplineRankTable title="Campionato" metricLabel="amm. / esp." rows={competitionRankings.campionato.discipline} /><DisciplineRankTable title="Coppa" metricLabel="amm. / esp." rows={competitionRankings.coppa.discipline} /></div>
-      <section className="chartsGrid teamCharts"><LineChart title="Distanza squadra per partita" unit="km" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.distance}))} /><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Tiri squadra per partita" unit="tiri" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.shots}))} /></section>
-      <div className="twoCol"><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /><RankTable title="Velocità massima" metricLabel="km/h" rows={rankings.speed} /></div>
-      <div className="singleCol"><RankTable title="Sprint / 90" metricLabel="sprint" rows={rankings.sprints90} /></div>
+      <section className="chartsGrid teamCharts"><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Giocatori impiegati per partita" unit="giocatori" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.appearances}))} /><LineChart title="Cartellini squadra per partita" unit="cartellini" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.cards}))} /></section>
+      <div className="twoCol"><RankTable title="Minuti giocati" metricLabel="minuti" rows={rankings.minutes} /><RankTable title="Presenze" metricLabel="gare" rows={rankings.appearances} /></div>
+      <div className="singleCol"><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /></div>
     </>}
 
     {view === 'minutes' && data.role === 'STAFF' && <>
