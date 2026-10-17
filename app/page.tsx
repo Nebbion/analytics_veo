@@ -8,6 +8,7 @@ type Player = {
   shots: number; shotsPer90: number; passes: number; completedPasses: number; passSuccess: number;
   distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
   highIntensityRuns: number; highIntensityRunsPer90: number; maxSpeed: number; averageSpeed: number; minutesPerAppearance: number;
+  recoveredBalls: number; recoveredBallsPer90: number; tackles: number; tacklesPer90: number; fouls: number; foulsPer90: number;
   passesPer90: number; completedPassesPer90: number;
   sprintsPerKm: number; highIntensityRunsPerKm: number;
   goalsPerShot: number; minutesPerGoal: number; minutesPerShot: number;
@@ -18,9 +19,18 @@ type Match = {
   assists: number; yellowCards: number; redCards: number;
   goals: number; goalsPer90: number; shots: number; shotsPer90: number; passes: number; completedPasses: number;
   passSuccess: number; distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
-  highIntensityRuns: number; highIntensityRunsPer90: number; maxSpeed: number; averageSpeed: number;
+  highIntensityRuns: number; highIntensityRunsPer90: number; recoveredBalls: number; recoveredBallsPer90: number;
+  tackles: number; tacklesPer90: number; fouls: number; foulsPer90: number; maxSpeed: number; averageSpeed: number;
 };
-type TeamMatch = { matchId: string; date: string; match: string; competition: 'CAMPIONATO' | 'COPPA' };
+type TeamMatch = {
+  matchId: string;
+  date: string;
+  match: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  result: string;
+  homeAway: string;
+  starters: { playerId: string; name: string; jerseyNumber: number | null }[];
+};
 type TacticalKind = 'average' | 'shot' | 'tackle';
 type TacticalPoint = {
   id: string;
@@ -58,6 +68,12 @@ type PlayerCompetitionStats = {
   sprintsPer90: number;
   highIntensityRuns: number;
   highIntensityRunsPer90: number;
+  recoveredBalls: number;
+  recoveredBallsPer90: number;
+  tackles: number;
+  tacklesPer90: number;
+  fouls: number;
+  foulsPer90: number;
   maxSpeed: number;
   averageSpeed: number;
 };
@@ -93,6 +109,9 @@ const hasPlayerTechnicalData = (player: Player) =>
   player.distanceKm > 0 ||
   player.sprints > 0 ||
   player.highIntensityRuns > 0 ||
+  player.recoveredBalls > 0 ||
+  player.tackles > 0 ||
+  player.fouls > 0 ||
   player.maxSpeed > 0 ||
   player.averageSpeed > 0;
 
@@ -103,6 +122,9 @@ const hasCompetitionTechnicalData = (stats: PlayerCompetitionStats) =>
   stats.distanceKm > 0 ||
   stats.sprints > 0 ||
   stats.highIntensityRuns > 0 ||
+  stats.recoveredBalls > 0 ||
+  stats.tackles > 0 ||
+  stats.fouls > 0 ||
   stats.maxSpeed > 0 ||
   stats.averageSpeed > 0;
 
@@ -154,9 +176,45 @@ function PlayerCompetitionPanel({ stats }: { stats: PlayerCompetitionStats }) {
     {hasTechnicalData && stats.passes > 0 && <Stat label="Passaggi %" value={fmt(stats.passSuccess, 1)} suffix="%" />}
     {hasTechnicalData && stats.distanceKm > 0 && <Stat label="Distanza" value={fmt(stats.distanceKm, 1)} suffix=" km" />}
     {hasTechnicalData && stats.distanceKm > 0 && <Stat label="Distanza / 90" value={fmt(stats.distancePer90, 1)} suffix=" km" />}
+    {hasTechnicalData && stats.recoveredBalls > 0 && <Stat label="Palle recuperate" value={int(stats.recoveredBalls)} />}
+    {hasTechnicalData && stats.tackles > 0 && <Stat label="Contrasti" value={int(stats.tackles)} />}
+    {hasTechnicalData && stats.fouls > 0 && <Stat label="Falli" value={int(stats.fouls)} />}
     {hasTechnicalData && stats.sprints > 0 && <Stat label="Sprint / 90" value={fmt(stats.sprintsPer90, 2)} />}
     {hasTechnicalData && stats.highIntensityRuns > 0 && <Stat label="Alta intensità / 90" value={fmt(stats.highIntensityRunsPer90, 2)} />}
+    {hasTechnicalData && stats.recoveredBalls > 0 && <Stat label="Recuperi / 90" value={fmt(stats.recoveredBallsPer90, 2)} />}
+    {hasTechnicalData && stats.tackles > 0 && <Stat label="Contrasti / 90" value={fmt(stats.tacklesPer90, 2)} />}
   </div></section>;
+}
+
+function TeamMatchesSection({ matches }: { matches: TeamMatch[] }) {
+  const sortedMatches = [...matches].sort((a, b) => b.date.localeCompare(a.date));
+  const dateLabel = (date: string) => date
+    ? new Date(`${date}T12:00:00`).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })
+    : 'Data non disponibile';
+
+  return <section className="panel tablePanel teamMatchesPanel">
+    <div className="sectionTitle"><div><span className="eyebrow">PARTITE</span><h2>Risultati e formazioni</h2></div><span>{sortedMatches.length} gare</span></div>
+    <div className="teamMatchList">
+      {sortedMatches.length ? sortedMatches.map(match => <article className="teamMatchCard" key={match.matchId}>
+        <div className="teamMatchHead">
+          <div>
+            <span className="teamMatchMeta">{match.competition === 'COPPA' ? 'Coppa' : 'Campionato'} · {dateLabel(match.date)}{match.homeAway ? ` · ${match.homeAway}` : ''}</span>
+            <h3>{match.match}</h3>
+          </div>
+          <div className="teamMatchResult"><span>Risultato</span><strong>{match.result || '—'}</strong></div>
+        </div>
+        <div className="teamLineup">
+          <div className="teamLineupTitle"><span>Formazione titolare</span><small>{match.starters.length ? `${match.starters.length} giocatori` : 'dato non disponibile'}</small></div>
+          {match.starters.length ? <div className="starterGrid">
+            {match.starters.map(starter => <div className="starterItem" key={`${match.matchId}-${starter.playerId}`}>
+              <span>{starter.jerseyNumber ?? '—'}</span><strong>{starter.name}</strong>
+            </div>)}
+          </div> : <p className="lineupEmpty">La distinta non indica i titolari per questa partita.</p>}
+        </div>
+        <a className="reportTableLink teamMatchReport" href={`/matches/${encodeURIComponent(match.matchId)}`}>Apri report</a>
+      </article>) : <p className="lineupEmpty">Nessuna partita disponibile.</p>}
+    </div>
+  </section>;
 }
 
 function TacticalPitch({ title, points, mode, selectedId, onSelect }: { title: string; points: TacticalPoint[]; mode: TacticalMode; selectedId: string; onSelect: (point: TacticalPoint) => void }) {
@@ -239,6 +297,9 @@ export default function Home() {
       distanceKm: 0,
       sprints: 0,
       highIntensityRuns: 0,
+      recoveredBalls: 0,
+      tackles: 0,
+      fouls: 0,
       maxSpeed: 0,
       weightedAverageSpeed: 0,
     });
@@ -262,6 +323,9 @@ export default function Home() {
       bucket.distanceKm += match.distanceKm;
       bucket.sprints += match.sprints;
       bucket.highIntensityRuns += match.highIntensityRuns;
+      bucket.recoveredBalls += match.recoveredBalls;
+      bucket.tackles += match.tackles;
+      bucket.fouls += match.fouls;
       bucket.maxSpeed = Math.max(bucket.maxSpeed, match.maxSpeed);
       bucket.weightedAverageSpeed += match.averageSpeed * match.minutes;
     });
@@ -285,6 +349,12 @@ export default function Home() {
       sprintsPer90: stats.minutes > 0 ? stats.sprints * 90 / stats.minutes : 0,
       highIntensityRuns: stats.highIntensityRuns,
       highIntensityRunsPer90: stats.minutes > 0 ? stats.highIntensityRuns * 90 / stats.minutes : 0,
+      recoveredBalls: stats.recoveredBalls,
+      recoveredBallsPer90: stats.minutes > 0 ? stats.recoveredBalls * 90 / stats.minutes : 0,
+      tackles: stats.tackles,
+      tacklesPer90: stats.minutes > 0 ? stats.tackles * 90 / stats.minutes : 0,
+      fouls: stats.fouls,
+      foulsPer90: stats.minutes > 0 ? stats.fouls * 90 / stats.minutes : 0,
       maxSpeed: stats.maxSpeed,
       averageSpeed: stats.minutes > 0 ? stats.weightedAverageSpeed / stats.minutes : 0,
     });
@@ -317,6 +387,17 @@ export default function Home() {
     const yellowCards = players.reduce((s, p) => s + p.yellowCards, 0);
     const redCards = players.reduce((s, p) => s + p.redCards, 0);
     const cards = yellowCards + redCards;
+    const shots = players.reduce((s, p) => s + p.shots, 0);
+    const passes = players.reduce((s, p) => s + p.passes, 0);
+    const completedPasses = players.reduce((s, p) => s + p.completedPasses, 0);
+    const distance = players.reduce((s, p) => s + p.distanceKm, 0);
+    const sprints = players.reduce((s, p) => s + p.sprints, 0);
+    const highIntensity = players.reduce((s, p) => s + p.highIntensityRuns, 0);
+    const recoveredBalls = players.reduce((s, p) => s + p.recoveredBalls, 0);
+    const tackles = players.reduce((s, p) => s + p.tackles, 0);
+    const fouls = players.reduce((s, p) => s + p.fouls, 0);
+    const maxSpeed = Math.max(...players.map(p => p.maxSpeed), 0);
+    const weightedAverageSpeed = players.reduce((s, p) => s + p.averageSpeed * p.minutes, 0);
 
     return {
       players: players.length,
@@ -329,11 +410,24 @@ export default function Home() {
       yellowCards,
       redCards,
       cards,
+      shots,
+      passes,
+      completedPasses,
+      distance,
+      sprints,
+      highIntensity,
+      recoveredBalls,
+      tackles,
+      fouls,
+      maxSpeed,
+      averageSpeed: totalMinutes > 0 ? weightedAverageSpeed / totalMinutes : 0,
+      passSuccess: passes > 0 ? completedPasses / passes * 100 : 0,
       goalsPerMatch: playedMatches > 0 ? goals / playedMatches : 0,
       assistsPerMatch: playedMatches > 0 ? assists / playedMatches : 0,
       cardsPerMatch: playedMatches > 0 ? cards / playedMatches : 0,
       minutesPerUsedPlayer: usedPlayers > 0 ? totalMinutes / usedPlayers : 0,
       minutesPerAppearance: totalAppearances > 0 ? totalMinutes / totalAppearances : 0,
+      hasVeoData: shots > 0 || passes > 0 || distance > 0 || sprints > 0 || highIntensity > 0 || recoveredBalls > 0 || tackles > 0 || fouls > 0 || maxSpeed > 0 || weightedAverageSpeed > 0,
     };
   }, [players, matches, teamMatches]);
 
@@ -355,6 +449,10 @@ export default function Home() {
     goals90: [...players].sort((a,b) => b.goalsPer90 - a.goalsPer90).map(p => ({name:p.name,value:p.goalsPer90})),
     minutes: [...players].sort((a,b) => b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.minutes})),
     appearances: [...players].sort((a,b) => b.appearances - a.appearances || b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.appearances})),
+    sprints90: [...players].filter(p => p.sprints > 0).sort((a,b) => b.sprintsPer90 - a.sprintsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.sprintsPer90})),
+    highIntensity90: [...players].filter(p => p.highIntensityRuns > 0).sort((a,b) => b.highIntensityRunsPer90 - a.highIntensityRunsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.highIntensityRunsPer90})),
+    recoveredBalls90: [...players].filter(p => p.recoveredBalls > 0).sort((a,b) => b.recoveredBallsPer90 - a.recoveredBallsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.recoveredBallsPer90})),
+    tackles90: [...players].filter(p => p.tackles > 0).sort((a,b) => b.tacklesPer90 - a.tacklesPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.tacklesPer90})),
   }), [players]);
   const competitionRankings = useMemo(() => {
     const playerNameById = new Map(players.map(p => [p.playerId, p.name]));
@@ -528,6 +626,9 @@ export default function Home() {
             {player.distanceKm > 0 && <Stat label="Distanza / 90" value={fmt(player.distancePer90, 1)} suffix=" km" />}
             {player.sprints > 0 && <Stat label="Sprint" value={int(player.sprints)} />}
             {player.highIntensityRuns > 0 && <Stat label="Alta intensità" value={int(player.highIntensityRuns)} />}
+            {player.recoveredBalls > 0 && <Stat label="Palle recuperate" value={int(player.recoveredBalls)} />}
+            {player.tackles > 0 && <Stat label="Contrasti" value={int(player.tackles)} />}
+            {player.fouls > 0 && <Stat label="Falli" value={int(player.fouls)} />}
             {player.maxSpeed > 0 && <Stat label="Velocità max" value={fmt(player.maxSpeed, 1)} suffix=" km/h" />}
             {player.averageSpeed > 0 && <Stat label="Velocità media" value={fmt(player.averageSpeed, 1)} suffix=" km/h" />}
           </div>
@@ -540,6 +641,9 @@ export default function Home() {
             {player.completedPasses > 0 && <Stat label="Passaggi completati / 90" value={fmt(player.completedPassesPer90, 2)} />}
             {player.sprints > 0 && <Stat label="Sprint / 90" value={fmt(player.sprintsPer90, 2)} />}
             {player.highIntensityRuns > 0 && <Stat label="Alta intensità / 90" value={fmt(player.highIntensityRunsPer90, 2)} />}
+            {player.recoveredBalls > 0 && <Stat label="Recuperi / 90" value={fmt(player.recoveredBallsPer90, 2)} />}
+            {player.tackles > 0 && <Stat label="Contrasti / 90" value={fmt(player.tacklesPer90, 2)} />}
+            {player.fouls > 0 && <Stat label="Falli / 90" value={fmt(player.foulsPer90, 2)} />}
             {player.sprints > 0 && player.distanceKm > 0 && <Stat label="Sprint / km" value={fmt(player.sprintsPerKm, 2)} />}
             {player.highIntensityRuns > 0 && player.distanceKm > 0 && <Stat label="Alta intensità / km" value={fmt(player.highIntensityRunsPerKm, 2)} />}
             {player.shots > 0 && <Stat label="Gol / tiro" value={fmt(player.goalsPerShot, 2)} />}
@@ -559,11 +663,31 @@ export default function Home() {
         <Stat label="Gol" value={int(team.goals)} /><Stat label="Gol / partita" value={fmt(team.goalsPerMatch, 2)} /><Stat label="Assist" value={int(team.assists)} /><Stat label="Assist / partita" value={fmt(team.assistsPerMatch, 2)} />
         <Stat label="Ammonizioni" value={int(team.yellowCards)} /><Stat label="Espulsioni" value={int(team.redCards)} /><Stat label="Cartellini / partita" value={fmt(team.cardsPerMatch, 2)} /><Stat label="Minuti medi / giocatore" value={fmt(team.minutesPerUsedPlayer, 0)} />
       </section>
+      {team.hasVeoData && <section className="panel tablePanel advancedStats">
+        <div className="sectionTitle"><div><span className="eyebrow">VEO</span><h2>Dati fisici e tecnici</h2></div><span>totali squadra</span></div>
+        <div className="statsGrid advancedGrid">
+          {team.sprints > 0 && <Stat label="Sprint" value={int(team.sprints)} />}
+          {team.highIntensity > 0 && <Stat label="Corse alta intensità" value={int(team.highIntensity)} />}
+          {team.recoveredBalls > 0 && <Stat label="Palle recuperate" value={int(team.recoveredBalls)} />}
+          {team.tackles > 0 && <Stat label="Contrasti" value={int(team.tackles)} />}
+          {team.fouls > 0 && <Stat label="Falli" value={int(team.fouls)} />}
+          {team.distance > 0 && <Stat label="Distanza" value={fmt(team.distance, 1)} suffix=" km" />}
+          {team.shots > 0 && <Stat label="Tiri" value={int(team.shots)} />}
+          {team.passes > 0 && <Stat label="Passaggi" value={int(team.passes)} />}
+          {team.completedPasses > 0 && <Stat label="Passaggi completati" value={int(team.completedPasses)} />}
+          {team.passes > 0 && <Stat label="Passaggi %" value={fmt(team.passSuccess, 1)} suffix="%" />}
+          {team.maxSpeed > 0 && <Stat label="Velocità max" value={fmt(team.maxSpeed, 1)} suffix=" km/h" />}
+          {team.averageSpeed > 0 && <Stat label="Velocità media" value={fmt(team.averageSpeed, 1)} suffix=" km/h" />}
+        </div>
+      </section>}
+      <TeamMatchesSection matches={teamMatches} />
       <div className="twoCol"><RankTable title="Gol campionato" metricLabel="totale" rows={competitionRankings.campionato.goals} /><RankTable title="Assist campionato" metricLabel="totale" rows={competitionRankings.campionato.assists} /></div>
       <div className="twoCol"><RankTable title="Gol coppa" metricLabel="totale" rows={competitionRankings.coppa.goals} /><RankTable title="Assist coppa" metricLabel="totale" rows={competitionRankings.coppa.assists} /></div>
       <div className="twoCol"><DisciplineRankTable title="Campionato" metricLabel="amm. / esp." rows={competitionRankings.campionato.discipline} /><DisciplineRankTable title="Coppa" metricLabel="amm. / esp." rows={competitionRankings.coppa.discipline} /></div>
       <section className="chartsGrid teamCharts"><LineChart title="Gol squadra per partita" unit="gol" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.goals}))} /><LineChart title="Giocatori impiegati per partita" unit="giocatori" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.appearances}))} /><LineChart title="Cartellini squadra per partita" unit="cartellini" color="neutral" values={matchSummary.map(m => ({label: dateLabel(m.date), value:m.cards}))} /></section>
       <div className="twoCol"><RankTable title="Minuti giocati" metricLabel="minuti" rows={rankings.minutes} /><RankTable title="Presenze" metricLabel="gare" rows={rankings.appearances} /></div>
+      {(rankings.sprints90.length > 0 || rankings.highIntensity90.length > 0) && <div className="twoCol">{rankings.sprints90.length > 0 && <RankTable title="Sprint / 90" metricLabel="sprint" rows={rankings.sprints90} />}{rankings.highIntensity90.length > 0 && <RankTable title="Alta intensità / 90" metricLabel="corse" rows={rankings.highIntensity90} />}</div>}
+      {(rankings.recoveredBalls90.length > 0 || rankings.tackles90.length > 0) && <div className="twoCol">{rankings.recoveredBalls90.length > 0 && <RankTable title="Recuperi / 90" metricLabel="recuperi" rows={rankings.recoveredBalls90} />}{rankings.tackles90.length > 0 && <RankTable title="Contrasti / 90" metricLabel="contrasti" rows={rankings.tackles90} />}</div>}
       <div className="singleCol"><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /></div>
     </>}
 

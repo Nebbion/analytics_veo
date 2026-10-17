@@ -67,6 +67,38 @@ const competitionLabel = (row: MatchRow | undefined) => {
 const assistKeys = ['assist', 'assists', 'assistenze'];
 const yellowCardKeys = ['ammonizioni', 'ammonizione', 'cartellini_gialli', 'gialli', 'cartellini_giallo'];
 const redCardKeys = ['espulsioni', 'espulsione', 'cartellini_rossi', 'rossi', 'cartellini_rosso'];
+const recoveredBallKeys = ['palle_recuperate', 'recuperi', 'recuperate', 'palloni_recuperati', 'ball_recoveries', 'balls_recovered', 'recovered_balls', 'recoveries'];
+const recoveredBallPer90Keys = ['palle_recuperate_per_90', 'recuperi_per_90', 'palloni_recuperati_per_90', 'ball_recoveries_per_90', 'balls_recovered_per_90', 'recoveries_per_90'];
+const tackleKeys = ['contrasti', 'tackles', 'duelli', 'duels'];
+const tacklePer90Keys = ['contrasti_per_90', 'tackles_per_90', 'duelli_per_90', 'duels_per_90'];
+const foulKeys = ['falli', 'fouls'];
+const foulPer90Keys = ['falli_per_90', 'fouls_per_90'];
+const starterKeys = ['titolare', 'is_titolare', 'starter', 'is_starter', 'starting_xi', 'formazione_titolare', 'tipo_presenza', 'stato_presenza'];
+const jerseyNumberKeys = ['numero', 'numero_maglia', 'jersey_number', 'shirt_number'];
+
+const isStarterRow = (row: Record<string, unknown>) => {
+  const value = rowValue(row, starterKeys);
+  if (value === undefined) return false;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  return /^(1|true|si|sì|yes|titolare|starter|starting|x)$/i.test(String(value).trim());
+};
+
+const matchResult = (row: MatchRow) => {
+  const direct = rowText(row, ['risultato', 'result', 'score', 'punteggio']);
+  if (direct) return direct;
+
+  const homeGoals = rowNumber(row, ['gol_casa', 'home_goals', 'home_score']);
+  const awayGoals = rowNumber(row, ['gol_trasferta', 'away_goals', 'away_score']);
+  return homeGoals !== null && awayGoals !== null ? `${homeGoals} - ${awayGoals}` : '';
+};
+
+const lineupFromMatch = (row: MatchRow) => {
+  const value = rowValue(row, ['formazione_titolare', 'starting_lineup', 'lineup', 'starting_xi']);
+  if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+  if (value === undefined) return [];
+  return String(value).split(/[,;|\n]+/).map(item => item.trim()).filter(Boolean);
+};
 
 const per90 = (value: number, minutes: number) =>
   minutes > 0 ? value * 90 / minutes : 0;
@@ -484,6 +516,12 @@ export async function GET() {
       sprintsPer90: num(s?.sprint_per_90),
       highIntensityRuns: num(s?.corse_alta_intensita),
       highIntensityRunsPer90: num(s?.corse_alta_intensita_per_90),
+      recoveredBalls: optionalNum(s, recoveredBallKeys),
+      recoveredBallsPer90: optionalNum(s, recoveredBallPer90Keys) || per90(optionalNum(s, recoveredBallKeys), num(s?.minuti)),
+      tackles: optionalNum(s, tackleKeys),
+      tacklesPer90: optionalNum(s, tacklePer90Keys) || per90(optionalNum(s, tackleKeys), num(s?.minuti)),
+      fouls: optionalNum(s, foulKeys),
+      foulsPer90: optionalNum(s, foulPer90Keys) || per90(optionalNum(s, foulKeys), num(s?.minuti)),
       maxSpeed: num(s?.velocita_max_kmh),
       averageSpeed: num(s?.velocita_media_kmh),
       minutesPerAppearance: num(s?.minuti_per_presenza),
@@ -523,6 +561,12 @@ export async function GET() {
       sprintsPer90: num(s.sprint_per_90) || per90(num(s.sprint), minutes),
       highIntensityRuns: num(s.corse_alta_intensita),
       highIntensityRunsPer90: num(s.corse_alta_intensita_per_90) || per90(num(s.corse_alta_intensita), minutes),
+      recoveredBalls: optionalNum(s, recoveredBallKeys),
+      recoveredBallsPer90: optionalNum(s, recoveredBallPer90Keys) || per90(optionalNum(s, recoveredBallKeys), minutes),
+      tackles: optionalNum(s, tackleKeys),
+      tacklesPer90: optionalNum(s, tacklePer90Keys) || per90(optionalNum(s, tackleKeys), minutes),
+      fouls: optionalNum(s, foulKeys),
+      foulsPer90: optionalNum(s, foulPer90Keys) || per90(optionalNum(s, foulKeys), minutes),
       maxSpeed: num(s.velocita_max_kmh),
       averageSpeed: num(s.velocita_media_kmh),
     };
@@ -536,14 +580,42 @@ export async function GET() {
     ? allMatchStats
     : allMatchStats.filter(m => m.playerId === ownPlayerId);
 
+  const startersByMatchId = new Map<string, { playerId: string; name: string; jerseyNumber: number | null }[]>();
+  allStats.forEach(row => {
+    if (!isStarterRow(row)) return;
+    const starters = startersByMatchId.get(row.match_id) ?? [];
+    starters.push({
+      playerId: row.player_id,
+      name: (playerNameMap.get(row.player_id) ?? rowText(row, ['nome', 'player_name', 'giocatore'])) || row.player_id,
+      jerseyNumber: rowNumber(row, jerseyNumberKeys),
+    });
+    startersByMatchId.set(row.match_id, starters);
+  });
+
   // Tutti gli utenti autenticati possono vedere l'elenco delle partite,
   // mentre le statistiche restano filtrate dal ruolo/RLS.
-  const teamMatches = allMatches.map(m => ({
-    matchId: m.match_id,
-    date: m.data ?? '',
-    match: m.partita,
-    competition: competitionLabel(m),
-  }));
+  const teamMatches = allMatches.map(m => {
+    const starters = [...new Map(
+      (startersByMatchId.get(m.match_id) ?? []).map(starter => [starter.playerId || starter.name, starter])
+    ).values()]
+      .sort((a, b) =>
+        (a.jerseyNumber ?? Number.MAX_SAFE_INTEGER) - (b.jerseyNumber ?? Number.MAX_SAFE_INTEGER) ||
+        a.name.localeCompare(b.name, 'it')
+      );
+    const directLineup = lineupFromMatch(m);
+
+    return {
+      matchId: m.match_id,
+      date: m.data ?? '',
+      match: m.partita,
+      competition: competitionLabel(m),
+      result: matchResult(m),
+      homeAway: rowText(m, ['casa_trasferta', 'home_away', 'venue', 'sede']),
+      starters: starters.length
+        ? starters
+        : directLineup.map((name, index) => ({ playerId: `lineup-${index}`, name, jerseyNumber: null })),
+    };
+  });
 
   if (!isStaff && !players.length) {
     return NextResponse.json(
