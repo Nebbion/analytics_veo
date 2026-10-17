@@ -30,3 +30,18 @@ La tabella Supabase `public.utenti` deve contenere:
 
 Per `STAFF`, `player_id` può essere vuoto.
 Per `GIOCATORE`, `player_id` deve corrispondere al `Player_ID` presente nelle statistiche.
+
+## Deploy database da GitHub
+
+Le migration in `supabase/migrations` vengono applicate automaticamente al database
+di produzione quando una modifica a quella directory viene inviata su `main`.
+
+Configurare una sola volta questi GitHub Actions Secrets:
+
+- `SUPABASE_ACCESS_TOKEN`: personal access token Supabase limitato al progetto.
+- `SUPABASE_PROJECT_ID`: project ref del progetto Supabase.
+- `SUPABASE_DB_PASSWORD`: password del database del progetto.
+
+Il workflow `.github/workflows/deploy-supabase.yml` esegue prima il dry-run e poi
+`supabase db push`. Dopo l'attivazione di questo flusso, tutte le modifiche allo
+schema devono passare da una nuova migration Git.

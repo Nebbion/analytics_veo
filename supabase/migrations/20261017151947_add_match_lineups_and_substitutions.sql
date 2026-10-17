@@ -1,5 +1,3 @@
-begin;
-
 create table if not exists public.match_lineups (
   match_id text not null references public.matches(match_id) on delete cascade,
   player_id text not null references public.players(player_id) on delete cascade,
@@ -125,5 +123,3 @@ comment on table public.match_lineups is
   'Distinta YouCoach della singola partita: titolari e riserve.';
 comment on table public.match_substitutions is
   'Sostituzioni YouCoach della singola partita.';
-
-commit;
