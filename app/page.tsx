@@ -29,7 +29,7 @@ type TeamMatch = {
   competition: 'CAMPIONATO' | 'COPPA';
   result: string;
   homeAway: string;
-  starters: { playerId: string; name: string; listNumber: number }[];
+  starters: { playerId: string; name: string; listNumber: number | null }[];
   summary: {
     playersUsed: number;
     minutes: number;
@@ -233,9 +233,9 @@ function TeamMatchesSection({ matches }: { matches: TeamMatch[] }) {
             <div className="teamLineupTitle"><span>Formazione titolare</span><small>{match.starters.length ? `${match.starters.length} giocatori` : 'dato non disponibile'}</small></div>
             {match.starters.length ? <div className="starterGrid">
               {match.starters.map(starter => <div className="starterItem" key={`${match.matchId}-${starter.playerId}`}>
-                <span>{starter.listNumber}</span><strong>{starter.name}</strong>
+                <span>{starter.listNumber ?? '—'}</span><strong>{starter.name}</strong>
               </div>)}
-            </div> : <p className="lineupEmpty">La distinta non contiene giocatori numerati da 1 a 11.</p>}
+            </div> : <p className="lineupEmpty">Formazione titolare non disponibile.</p>}
           </div>
           {matchMetrics.length > 0 && <div className="teamMatchStats">
             {matchMetrics.map(metric => <div className="teamMatchStat" key={metric.label}><span>{metric.label}</span><strong>{int(metric.value)}</strong></div>)}

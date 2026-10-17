@@ -40,6 +40,14 @@ type StatRow = Record<string, unknown> & {
   velocita_media_kmh: number | null;
 };
 
+type LineupRow = {
+  match_id: string;
+  player_id: string;
+  numero: number | null;
+  titolare: boolean;
+  ordine: number | null;
+};
+
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const optionalNum = (row: Record<string, unknown> | undefined, keys: string[]) => {
   for (const key of keys) {
@@ -73,8 +81,6 @@ const tackleKeys = ['contrasti', 'tackles', 'duelli', 'duels'];
 const tacklePer90Keys = ['contrasti_per_90', 'tackles_per_90', 'duelli_per_90', 'duels_per_90'];
 const foulKeys = ['falli', 'fouls'];
 const foulPer90Keys = ['falli_per_90', 'fouls_per_90'];
-const lineupNumberKeys = ['numero_distinta', 'ordine_distinta', 'lineup_order', 'numero', 'numero_maglia', 'jersey_number', 'shirt_number'];
-
 const matchResult = (row: MatchRow) => {
   const direct = rowText(row, ['risultato', 'result', 'score', 'punteggio']);
   if (direct) return direct;
@@ -394,7 +400,7 @@ export async function GET() {
   // RLS fa già il filtraggio:
   // - STAFF: vede tutti i giocatori e tutte le statistiche
   // - GIOCATORE: vede solo il proprio Player_ID
-  const [playersResult, matchesResult, statsResult, seasonResult] = await Promise.all([
+  const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult] = await Promise.all([
     supabase
       .from('players')
       .select('player_id,nome')
@@ -409,6 +415,9 @@ export async function GET() {
     supabase
       .from('player_season_stats')
       .select('*'),
+    supabase
+      .from('match_lineups')
+      .select('match_id,player_id,numero,titolare,ordine'),
   ]);
 
   if (playersResult.error) {
@@ -443,6 +452,8 @@ export async function GET() {
   const allMatches = (matchesResult.data ?? []) as MatchRow[];
   const allStats = (statsResult.data ?? []) as StatRow[];
   const allSeason = (seasonResult.data ?? []) as SeasonRow[];
+  // La dashboard resta disponibile anche prima dell'esecuzione manuale della migration.
+  const allLineups = lineupsResult.error ? [] : (lineupsResult.data ?? []) as LineupRow[];
   const seasonMap = new Map(allSeason.map(row => [row.player_id, row]));
   const matchMetricTotals = new Map<string, { assists: number; yellowCards: number; redCards: number }>();
 
@@ -570,15 +581,15 @@ export async function GET() {
     ? allMatchStats
     : allMatchStats.filter(m => m.playerId === ownPlayerId);
 
-  const startersByMatchId = new Map<string, { playerId: string; name: string; listNumber: number }[]>();
-  allStats.forEach(row => {
-    const listNumber = rowNumber(row, lineupNumberKeys);
-    if (listNumber === null || listNumber < 1 || listNumber > 11) return;
+  const startersByMatchId = new Map<string, { playerId: string; name: string; listNumber: number | null; order: number | null }[]>();
+  allLineups.forEach(row => {
+    if (!row.titolare) return;
     const starters = startersByMatchId.get(row.match_id) ?? [];
     starters.push({
       playerId: row.player_id,
-      name: (playerNameMap.get(row.player_id) ?? rowText(row, ['nome', 'player_name', 'giocatore'])) || row.player_id,
-      listNumber,
+      name: playerNameMap.get(row.player_id) || row.player_id,
+      listNumber: row.numero,
+      order: row.ordine,
     });
     startersByMatchId.set(row.match_id, starters);
   });
@@ -628,7 +639,8 @@ export async function GET() {
       (startersByMatchId.get(m.match_id) ?? []).map(starter => [starter.playerId || starter.name, starter])
     ).values()]
       .sort((a, b) =>
-        a.listNumber - b.listNumber ||
+        (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) ||
+        (a.listNumber ?? Number.MAX_SAFE_INTEGER) - (b.listNumber ?? Number.MAX_SAFE_INTEGER) ||
         a.name.localeCompare(b.name, 'it')
       );
 

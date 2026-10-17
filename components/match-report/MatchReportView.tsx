@@ -4,6 +4,8 @@ import { MatchBarChart } from './MatchBarChart';
 import { MatchOfficialEvents } from './MatchOfficialEvents';
 import { MatchOverview } from './MatchOverview';
 import { MatchRankings } from './MatchRankings';
+import { MatchLineup } from './MatchLineup';
+import { MatchSubstitutions } from './MatchSubstitutions';
 import { PlayerMatchTable } from './PlayerMatchTable';
 import { ShotMap } from './ShotMap';
 import { TackleMap } from './TackleMap';
@@ -18,6 +20,10 @@ export function MatchReportView({ report }: { report: MatchReport }) {
 
   return <>
     <MatchOverview report={report} />
+    <section className="reportMatchPeople">
+      <MatchLineup lineup={report.lineup} />
+      <MatchSubstitutions substitutions={report.substitutions} lineup={report.lineup} />
+    </section>
     <section className="reportChartsGrid">
       <MatchBarChart title="Distanza per giocatore" unit="km" bars={chartPlayers.map(({ label, player }) => ({ label, value: player.distanceKm }))} />
       <MatchBarChart title="Sprint per giocatore" unit="sprint" bars={chartPlayers.map(({ label, player }) => ({ label, value: player.sprints }))} />

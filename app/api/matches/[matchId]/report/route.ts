@@ -16,6 +16,20 @@ export const revalidate = 0;
 type DataRow = Record<string, unknown>;
 type PlayerRow = { player_id: string; nome: string };
 type MatchRow = DataRow & { match_id: string; data: string | null; partita: string };
+type LineupRow = {
+  match_id: string;
+  player_id: string;
+  numero: number | null;
+  titolare: boolean;
+  ordine: number | null;
+};
+type SubstitutionRow = {
+  match_id: string;
+  minuto: number;
+  recupero: boolean;
+  player_out_id: string | null;
+  player_in_id: string | null;
+};
 
 const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -220,12 +234,14 @@ export async function GET(
     return NextResponse.json({ error: 'Player_ID non associato al profilo utente.' }, { status: 403 });
   }
 
-  const [matchResult, statsResult, playersResult, positionsResult, eventsResult] = await Promise.all([
+  const [matchResult, statsResult, playersResult, positionsResult, eventsResult, lineupResult, substitutionsResult] = await Promise.all([
     supabase.from('matches').select('*').eq('match_id', matchId).maybeSingle(),
     supabase.from('player_match_stats').select('*').eq('match_id', matchId),
     supabase.from('players').select('player_id,nome'),
     supabase.from('veo_position_stats').select('*').eq('match_id', matchId),
     supabase.from('veo_event_positions').select('*').eq('match_id', matchId),
+    supabase.from('match_lineups').select('match_id,player_id,numero,titolare,ordine').eq('match_id', matchId),
+    supabase.from('match_substitutions').select('match_id,minuto,recupero,player_out_id,player_in_id').eq('match_id', matchId),
   ]);
 
   if (matchResult.error) {
@@ -252,17 +268,30 @@ export async function GET(
     return NextResponse.json({ error: `Supabase veo_event_positions: ${eventsResult.error.message}` }, { status: 502 });
   }
 
+  if (lineupResult.error) {
+    return NextResponse.json({ error: `Supabase match_lineups: ${lineupResult.error.message}` }, { status: 502 });
+  }
+
+  if (substitutionsResult.error) {
+    return NextResponse.json({ error: `Supabase match_substitutions: ${substitutionsResult.error.message}` }, { status: 502 });
+  }
+
   const match = matchResult.data as MatchRow;
   const playerNameMap = new Map((playersResult.data ?? []).map((player: PlayerRow) => [player.player_id, player.nome]));
   const positionRows = visibleRowsForRole((positionsResult.data ?? []) as DataRow[], isStaff, ownPlayerId);
   const eventRows = visibleRowsForRole((eventsResult.data ?? []) as DataRow[], isStaff, ownPlayerId);
   const statsRows = visibleRowsForRole((statsResult.data ?? []) as DataRow[], isStaff, ownPlayerId);
+  const lineupRows = (lineupResult.data ?? []) as LineupRow[];
+  const substitutionRows = (substitutionsResult.data ?? []) as SubstitutionRow[];
 
   const jerseyByPlayerId = new Map<string, number>();
+  lineupRows.forEach(row => {
+    if (row.player_id && row.numero !== null) jerseyByPlayerId.set(row.player_id, row.numero);
+  });
   positionRows.forEach(row => {
     const id = playerKey(row);
     const number = rowNumber(row, ['numero', 'numero_maglia', 'jersey_number', 'shirt_number']);
-    if (id && number !== null) jerseyByPlayerId.set(id, number);
+    if (id && number !== null && !jerseyByPlayerId.has(id)) jerseyByPlayerId.set(id, number);
   });
   eventRows.forEach(row => {
     const id = playerKey(row);
@@ -306,6 +335,32 @@ export async function GET(
       (a.jerseyNumber ?? Number.MAX_SAFE_INTEGER) - (b.jerseyNumber ?? Number.MAX_SAFE_INTEGER) ||
       a.name.localeCompare(b.name, 'it')
     );
+
+  const lineup = lineupRows
+    .map(row => ({
+      playerId: row.player_id,
+      playerName: playerNameMap.get(row.player_id) || row.player_id,
+      jerseyNumber: row.numero,
+      starter: row.titolare,
+      order: row.ordine,
+    }))
+    .sort((a, b) =>
+      Number(b.starter) - Number(a.starter) ||
+      (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) ||
+      (a.jerseyNumber ?? Number.MAX_SAFE_INTEGER) - (b.jerseyNumber ?? Number.MAX_SAFE_INTEGER) ||
+      a.playerName.localeCompare(b.playerName, 'it')
+    );
+
+  const substitutions = substitutionRows
+    .map(row => ({
+      minute: row.minuto,
+      injuryTime: row.recupero,
+      playerOutId: row.player_out_id ?? '',
+      playerOutName: row.player_out_id ? playerNameMap.get(row.player_out_id) || row.player_out_id : '',
+      playerInId: row.player_in_id ?? '',
+      playerInName: row.player_in_id ? playerNameMap.get(row.player_in_id) || row.player_in_id : '',
+    }))
+    .sort((a, b) => a.minute - b.minute || a.playerOutName.localeCompare(b.playerOutName, 'it'));
 
   const toPoint = (
     row: DataRow,
@@ -376,6 +431,8 @@ export async function GET(
       homeAway: rowText(match, ['casa_trasferta', 'home_away', 'venue', 'sede']),
     },
     overview: overviewFromPlayers(players),
+    lineup,
+    substitutions,
     players,
     averagePositions,
     shots,
@@ -386,6 +443,8 @@ export async function GET(
     },
     officialEvents: buildOfficialEvents(players),
     notes: [
+      lineup.length ? 'Formazione e panchina da match_lineups (YouCoach).' : 'Nessuna formazione YouCoach disponibile per questa partita.',
+      substitutions.length ? 'Sostituzioni da match_substitutions (YouCoach).' : 'Nessuna sostituzione YouCoach disponibile per questa partita.',
       averagePositions.length ? 'Posizioni medie da veo_position_stats.x_media_pct / y_media_pct.' : 'Nessuna posizione media Veo disponibile per questa partita.',
       eventPoints.length ? 'Mappe eventi da veo_event_positions.' : 'Nessun evento Veo disponibile per questa partita.',
     ],

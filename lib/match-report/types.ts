@@ -76,6 +76,23 @@ export type MatchReportEvent = {
   value: number;
 };
 
+export type MatchReportLineupPlayer = {
+  playerId: string;
+  playerName: string;
+  jerseyNumber: number | null;
+  starter: boolean;
+  order: number | null;
+};
+
+export type MatchReportSubstitution = {
+  minute: number;
+  injuryTime: boolean;
+  playerOutId: string;
+  playerOutName: string;
+  playerInId: string;
+  playerInName: string;
+};
+
 export type MatchReport = {
   match: {
     matchId: string;
@@ -86,6 +103,8 @@ export type MatchReport = {
     homeAway: string;
   };
   overview: Record<MatchReportMetricKey, number | null>;
+  lineup: MatchReportLineupPlayer[];
+  substitutions: MatchReportSubstitution[];
   players: MatchReportPlayer[];
   averagePositions: MatchReportTacticalPoint[];
   shots: MatchReportTacticalPoint[];
