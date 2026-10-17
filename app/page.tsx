@@ -29,7 +29,19 @@ type TeamMatch = {
   competition: 'CAMPIONATO' | 'COPPA';
   result: string;
   homeAway: string;
-  starters: { playerId: string; name: string; jerseyNumber: number | null }[];
+  starters: { playerId: string; name: string; listNumber: number }[];
+  summary: {
+    playersUsed: number;
+    minutes: number;
+    goals: number;
+    assists: number;
+    yellowCards: number;
+    redCards: number;
+    sprints: number;
+    highIntensityRuns: number;
+    recoveredBalls: number;
+    tackles: number;
+  } | null;
 };
 type TacticalKind = 'average' | 'shot' | 'tackle';
 type TacticalPoint = {
@@ -195,24 +207,42 @@ function TeamMatchesSection({ matches }: { matches: TeamMatch[] }) {
   return <section className="panel tablePanel teamMatchesPanel">
     <div className="sectionTitle"><div><span className="eyebrow">PARTITE</span><h2>Risultati e formazioni</h2></div><span>{sortedMatches.length} gare</span></div>
     <div className="teamMatchList">
-      {sortedMatches.length ? sortedMatches.map(match => <article className="teamMatchCard" key={match.matchId}>
-        <div className="teamMatchHead">
-          <div>
-            <span className="teamMatchMeta">{match.competition === 'COPPA' ? 'Coppa' : 'Campionato'} · {dateLabel(match.date)}{match.homeAway ? ` · ${match.homeAway}` : ''}</span>
-            <h3>{match.match}</h3>
+      {sortedMatches.length ? sortedMatches.map(match => {
+        const matchMetrics = match.summary ? [
+          { label: 'Giocatori impiegati', value: match.summary.playersUsed, visible: match.summary.playersUsed > 0 },
+          { label: 'Minuti complessivi', value: match.summary.minutes, visible: match.summary.minutes > 0 },
+          { label: 'Gol registrati', value: match.summary.goals, visible: match.summary.goals > 0 },
+          { label: 'Assist', value: match.summary.assists, visible: match.summary.assists > 0 },
+          { label: 'Ammonizioni', value: match.summary.yellowCards, visible: match.summary.yellowCards > 0 },
+          { label: 'Espulsioni', value: match.summary.redCards, visible: match.summary.redCards > 0 },
+          { label: 'Sprint', value: match.summary.sprints, visible: match.summary.sprints > 0 },
+          { label: 'Alta intensità', value: match.summary.highIntensityRuns, visible: match.summary.highIntensityRuns > 0 },
+          { label: 'Palle recuperate', value: match.summary.recoveredBalls, visible: match.summary.recoveredBalls > 0 },
+          { label: 'Contrasti', value: match.summary.tackles, visible: match.summary.tackles > 0 },
+        ].filter(metric => metric.visible) : [];
+
+        return <article className="teamMatchCard" key={match.matchId}>
+          <div className="teamMatchHead">
+            <div>
+              <span className="teamMatchMeta">{match.competition === 'COPPA' ? 'Coppa' : 'Campionato'} · {dateLabel(match.date)}{match.homeAway ? ` · ${match.homeAway}` : ''}</span>
+              <h3>{match.match}</h3>
+            </div>
+            <div className="teamMatchResult"><span>Risultato</span><strong>{match.result || '—'}</strong></div>
           </div>
-          <div className="teamMatchResult"><span>Risultato</span><strong>{match.result || '—'}</strong></div>
-        </div>
-        <div className="teamLineup">
-          <div className="teamLineupTitle"><span>Formazione titolare</span><small>{match.starters.length ? `${match.starters.length} giocatori` : 'dato non disponibile'}</small></div>
-          {match.starters.length ? <div className="starterGrid">
-            {match.starters.map(starter => <div className="starterItem" key={`${match.matchId}-${starter.playerId}`}>
-              <span>{starter.jerseyNumber ?? '—'}</span><strong>{starter.name}</strong>
-            </div>)}
-          </div> : <p className="lineupEmpty">La distinta non indica i titolari per questa partita.</p>}
-        </div>
-        <a className="reportTableLink teamMatchReport" href={`/matches/${encodeURIComponent(match.matchId)}`}>Apri report</a>
-      </article>) : <p className="lineupEmpty">Nessuna partita disponibile.</p>}
+          <div className="teamLineup">
+            <div className="teamLineupTitle"><span>Formazione titolare</span><small>{match.starters.length ? `${match.starters.length} giocatori` : 'dato non disponibile'}</small></div>
+            {match.starters.length ? <div className="starterGrid">
+              {match.starters.map(starter => <div className="starterItem" key={`${match.matchId}-${starter.playerId}`}>
+                <span>{starter.listNumber}</span><strong>{starter.name}</strong>
+              </div>)}
+            </div> : <p className="lineupEmpty">La distinta non contiene giocatori numerati da 1 a 11.</p>}
+          </div>
+          {matchMetrics.length > 0 && <div className="teamMatchStats">
+            {matchMetrics.map(metric => <div className="teamMatchStat" key={metric.label}><span>{metric.label}</span><strong>{int(metric.value)}</strong></div>)}
+          </div>}
+          <a className="reportTableLink teamMatchReport" href={`/matches/${encodeURIComponent(match.matchId)}`}>Apri report</a>
+        </article>;
+      }) : <p className="lineupEmpty">Nessuna partita disponibile.</p>}
     </div>
   </section>;
 }
