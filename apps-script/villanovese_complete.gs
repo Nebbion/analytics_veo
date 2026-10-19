@@ -1973,6 +1973,44 @@ function creaAnalisiGiocatori() {
   // ==========================================
 
   const giocatori = {};
+  const presenzeUfficiali = new Set();
+  const presenzeContate = new Set();
+
+  const lineupSheet =
+    ss.getSheetByName('YOUCOACH_LINEUPS');
+
+  if (lineupSheet) {
+    sheetToObjects(lineupSheet).forEach(row => {
+      const matchId = String(row.Match_ID || '').trim();
+      const playerId = String(row.Player_ID || '').trim();
+      const titolare =
+        row.Titolare === true ||
+        String(row.Titolare).toLowerCase() === 'true';
+
+      if (matchId && playerId && titolare) {
+        presenzeUfficiali.add(matchId + '|' + playerId);
+      }
+    });
+  }
+
+  const substitutionsSheet =
+    ss.getSheetByName('YOUCOACH_SUBSTITUTIONS');
+
+  if (substitutionsSheet) {
+    sheetToObjects(substitutionsSheet).forEach(row => {
+      const matchId = String(row.Match_ID || '').trim();
+      const playerOutId = String(row.Player_Out_ID || '').trim();
+      const playerInId = String(row.Player_In_ID || '').trim();
+
+      if (matchId && playerOutId) {
+        presenzeUfficiali.add(matchId + '|' + playerOutId);
+      }
+
+      if (matchId && playerInId) {
+        presenzeUfficiali.add(matchId + '|' + playerInId);
+      }
+    });
+  }
 
 
   data.forEach(row => {
@@ -2057,8 +2095,15 @@ function creaAnalisiGiocatori() {
     // PRESENZA
     // ==========================================
 
-    if (minuti > 0) {
+    const presenzaKey =
+      matchId + '|' + playerId;
+
+    if (
+      (minuti > 0 || presenzeUfficiali.has(presenzaKey)) &&
+      !presenzeContate.has(presenzaKey)
+    ) {
       g.presenze++;
+      presenzeContate.add(presenzaKey);
     }
 
 

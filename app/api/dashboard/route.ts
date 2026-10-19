@@ -48,6 +48,12 @@ type LineupRow = {
   ordine: number | null;
 };
 
+type SubstitutionRow = {
+  match_id: string;
+  player_out_id: string;
+  player_in_id: string;
+};
+
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const optionalNum = (row: Record<string, unknown> | undefined, keys: string[]) => {
   for (const key of keys) {
@@ -400,7 +406,7 @@ export async function GET() {
   // RLS fa già il filtraggio:
   // - STAFF: vede tutti i giocatori e tutte le statistiche
   // - GIOCATORE: vede solo il proprio Player_ID
-  const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult] = await Promise.all([
+  const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult, substitutionsResult] = await Promise.all([
     supabase
       .from('players')
       .select('player_id,nome')
@@ -418,6 +424,9 @@ export async function GET() {
     supabase
       .from('match_lineups')
       .select('match_id,player_id,numero,titolare,ordine'),
+    supabase
+      .from('match_substitutions')
+      .select('match_id,player_out_id,player_in_id'),
   ]);
 
   if (playersResult.error) {
@@ -454,10 +463,22 @@ export async function GET() {
   const allSeason = (seasonResult.data ?? []) as SeasonRow[];
   // La dashboard resta disponibile anche prima dell'esecuzione manuale della migration.
   const allLineups = lineupsResult.error ? [] : (lineupsResult.data ?? []) as LineupRow[];
+  const allSubstitutions = substitutionsResult.error ? [] : (substitutionsResult.data ?? []) as SubstitutionRow[];
   const seasonMap = new Map(allSeason.map(row => [row.player_id, row]));
   const matchMetricTotals = new Map<string, { assists: number; yellowCards: number; redCards: number }>();
+  const appearanceKeys = new Set<string>();
+
+  allLineups.forEach(row => {
+    if (row.titolare) appearanceKeys.add(`${row.match_id}|${row.player_id}`);
+  });
+
+  allSubstitutions.forEach(row => {
+    if (row.player_out_id) appearanceKeys.add(`${row.match_id}|${row.player_out_id}`);
+    if (row.player_in_id) appearanceKeys.add(`${row.match_id}|${row.player_in_id}`);
+  });
 
   allStats.forEach(row => {
+    if (num(row.minuti) > 0) appearanceKeys.add(`${row.match_id}|${row.player_id}`);
     const current = matchMetricTotals.get(row.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
     current.assists += optionalNum(row, assistKeys);
     current.yellowCards += optionalNum(row, yellowCardKeys);
@@ -493,12 +514,14 @@ export async function GET() {
   const allSeasonalPlayers = allPlayers.map(p => {
     const s = seasonMap.get(p.player_id);
     const matchTotals = matchMetricTotals.get(p.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
+    const appearances = [...appearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
+    const minutes = num(s?.minuti);
 
     return {
       playerId: p.player_id,
       name: p.nome,
-      appearances: num(s?.presenze),
-      minutes: num(s?.minuti),
+      appearances,
+      minutes,
       goals: num(s?.gol),
       assists: optionalNum(s, assistKeys) || matchTotals.assists,
       yellowCards: optionalNum(s, yellowCardKeys) || matchTotals.yellowCards,
@@ -525,7 +548,7 @@ export async function GET() {
       foulsPer90: optionalNum(s, foulPer90Keys) || per90(optionalNum(s, foulKeys), num(s?.minuti)),
       maxSpeed: num(s?.velocita_max_kmh),
       averageSpeed: num(s?.velocita_media_kmh),
-      minutesPerAppearance: num(s?.minuti_per_presenza),
+      minutesPerAppearance: appearances > 0 ? minutes / appearances : 0,
       sprintsPerKm: num(s?.sprint_per_km),
       highIntensityRunsPerKm: num(s?.corse_alta_intensita_per_km),
       goalsPerShot: num(s?.gol_per_tiro),
