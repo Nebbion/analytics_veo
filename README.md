@@ -7,6 +7,9 @@ Dashboard privata ASD Villanovese, stagione 2026/2027.
 - Profilo applicativo in `public.utenti`.
 - Ruoli ammessi: `STAFF` e `GIOCATORE`.
 - `GIOCATORE` deve avere un `Player_ID` associato.
+- `GIOCATORE` vede il proprio profilo personale, la dashboard squadra, la
+  tattica completa e i report partita completi.
+- Le sezioni `Minuti` e `Confronto` restano visibili soltanto a `STAFF`.
 - Il browser chiama soltanto `/api/dashboard`; l'URL Apps Script è usato server-side tramite `DASHBOARD_API_URL`.
 - Gli asset pubblici non sono protetti dal middleware.
 - Cache disabilitata per i dati dashboard.

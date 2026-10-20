@@ -190,9 +190,6 @@ const buildOfficialEvents = (players: MatchReportPlayer[]) => {
   return events;
 };
 
-const visibleRowsForRole = (rows: DataRow[], isStaff: boolean, ownPlayerId: string) =>
-  isStaff ? rows : rows.filter(row => playerKey(row) === ownPlayerId);
-
 export async function GET(
   _request: Request,
   context: { params: Promise<{ matchId: string }> }
@@ -278,9 +275,9 @@ export async function GET(
 
   const match = matchResult.data as MatchRow;
   const playerNameMap = new Map((playersResult.data ?? []).map((player: PlayerRow) => [player.player_id, player.nome]));
-  const positionRows = visibleRowsForRole((positionsResult.data ?? []) as DataRow[], isStaff, ownPlayerId);
-  const eventRows = visibleRowsForRole((eventsResult.data ?? []) as DataRow[], isStaff, ownPlayerId);
-  const statsRows = visibleRowsForRole((statsResult.data ?? []) as DataRow[], isStaff, ownPlayerId);
+  const positionRows = (positionsResult.data ?? []) as DataRow[];
+  const eventRows = (eventsResult.data ?? []) as DataRow[];
+  const statsRows = (statsResult.data ?? []) as DataRow[];
   const lineupRows = (lineupResult.data ?? []) as LineupRow[];
   const substitutionRows = (substitutionsResult.data ?? []) as SubstitutionRow[];
 

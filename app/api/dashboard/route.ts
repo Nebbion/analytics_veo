@@ -298,8 +298,6 @@ const tacticalTableCandidates: { table: string; kind: TacticalKind }[] = [
 
 async function fetchTacticalData(
   supabase: SupabaseServerClient,
-  isStaff: boolean,
-  ownPlayerId: string,
   allMatches: MatchRow[],
   playerNameMap: Map<string, string>
 ): Promise<TacticalData> {
@@ -319,13 +317,9 @@ async function fetchTacticalData(
     normalizeTacticalPoints(result.rows, result.kind, result.table, allMatches, playerNameMap)
   );
 
-  const visiblePoints = isStaff
-    ? points
-    : points.filter(point => point.playerId === ownPlayerId);
-
   const dedupedPoints = [
     ...new Map(
-      visiblePoints.map(point => [
+      points.map(point => [
         `${point.kind}:${point.matchId}:${point.playerId}:${point.x}:${point.y}:${point.minute ?? ''}:${point.outcome}`,
         point,
       ])
@@ -403,9 +397,9 @@ export async function GET() {
     );
   }
 
-  // RLS fa già il filtraggio:
-  // - STAFF: vede tutti i giocatori e tutte le statistiche
-  // - GIOCATORE: vede solo il proprio Player_ID
+  // RLS consente agli utenti attivi i dati completi necessari alle viste
+  // Squadra, Tattica e Report partita. Qui manteniamo comunque separati
+  // il profilo personale del giocatore dai dati aggregati della squadra.
   const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult, substitutionsResult] = await Promise.all([
     supabase
       .from('players')
@@ -499,8 +493,6 @@ export async function GET() {
 
   const tactics = await fetchTacticalData(
     supabase,
-    isStaff,
-    ownPlayerId,
     allMatches,
     playerNameMap
   );
@@ -694,6 +686,8 @@ export async function GET() {
       playerId: isStaff ? null : ownPlayerId,
       players,
       matches,
+      teamPlayers: allSeasonalPlayers,
+      teamStats: allMatchStats,
       teamMatches,
       tactics,
       source: 'supabase',

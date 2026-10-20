@@ -60,7 +60,7 @@ type TacticalPoint = {
   outcome: string;
 };
 type TacticalData = { averagePositions: TacticalPoint[]; shots: TacticalPoint[]; tackles: TacticalPoint[]; source: 'supabase' | 'none' };
-type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamMatches?: TeamMatch[]; tactics?: TacticalData; error?: string };
+type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamPlayers?: Player[]; teamStats?: Match[]; teamMatches?: TeamMatch[]; tactics?: TacticalData; error?: string };
 type PlayerCompetitionStats = {
   label: 'Campionato' | 'Coppa';
   appearances: number;
@@ -297,13 +297,15 @@ export default function Home() {
         if (first) setSelected(first.name);
         if (first) setCompareA(first.name);
         if (second) setCompareB(second.name);
-        setTacticalPlayerId(json.role === 'GIOCATORE' && json.playerId ? json.playerId : 'ALL');
+        setTacticalPlayerId('ALL');
       })
       .catch(e => setError(e.message));
   }, []);
 
   const players = data?.players ?? [];
   const matches = data?.matches ?? [];
+  const teamPlayers = data?.teamPlayers ?? players;
+  const teamStats = data?.teamStats ?? matches;
   const teamMatches = data?.teamMatches ?? [];
   const tactics = data?.tactics ?? { averagePositions: [], shots: [], tackles: [], source: 'none' as const };
   const player = useMemo(() => players.find(p => p.name === selected), [players, selected]);
@@ -407,30 +409,30 @@ export default function Home() {
   }, [players, matches, teamMatches]);
 
   const team = useMemo(() => {
-    const playedMatchIds = new Set(matches.map(m => m.matchId).filter(Boolean));
+    const playedMatchIds = new Set(teamStats.map(m => m.matchId).filter(Boolean));
     const playedMatches = playedMatchIds.size || teamMatches.length;
-    const usedPlayers = players.filter(p => p.minutes > 0 || p.appearances > 0).length;
-    const totalMinutes = players.reduce((s, p) => s + p.minutes, 0);
-    const totalAppearances = players.reduce((s, p) => s + p.appearances, 0);
-    const goals = players.reduce((s, p) => s + p.goals, 0);
-    const assists = players.reduce((s, p) => s + p.assists, 0);
-    const yellowCards = players.reduce((s, p) => s + p.yellowCards, 0);
-    const redCards = players.reduce((s, p) => s + p.redCards, 0);
+    const usedPlayers = teamPlayers.filter(p => p.minutes > 0 || p.appearances > 0).length;
+    const totalMinutes = teamPlayers.reduce((s, p) => s + p.minutes, 0);
+    const totalAppearances = teamPlayers.reduce((s, p) => s + p.appearances, 0);
+    const goals = teamPlayers.reduce((s, p) => s + p.goals, 0);
+    const assists = teamPlayers.reduce((s, p) => s + p.assists, 0);
+    const yellowCards = teamPlayers.reduce((s, p) => s + p.yellowCards, 0);
+    const redCards = teamPlayers.reduce((s, p) => s + p.redCards, 0);
     const cards = yellowCards + redCards;
-    const shots = players.reduce((s, p) => s + p.shots, 0);
-    const passes = players.reduce((s, p) => s + p.passes, 0);
-    const completedPasses = players.reduce((s, p) => s + p.completedPasses, 0);
-    const distance = players.reduce((s, p) => s + p.distanceKm, 0);
-    const sprints = players.reduce((s, p) => s + p.sprints, 0);
-    const highIntensity = players.reduce((s, p) => s + p.highIntensityRuns, 0);
-    const recoveredBalls = players.reduce((s, p) => s + p.recoveredBalls, 0);
-    const tackles = players.reduce((s, p) => s + p.tackles, 0);
-    const fouls = players.reduce((s, p) => s + p.fouls, 0);
-    const maxSpeed = Math.max(...players.map(p => p.maxSpeed), 0);
-    const weightedAverageSpeed = players.reduce((s, p) => s + p.averageSpeed * p.minutes, 0);
+    const shots = teamPlayers.reduce((s, p) => s + p.shots, 0);
+    const passes = teamPlayers.reduce((s, p) => s + p.passes, 0);
+    const completedPasses = teamPlayers.reduce((s, p) => s + p.completedPasses, 0);
+    const distance = teamPlayers.reduce((s, p) => s + p.distanceKm, 0);
+    const sprints = teamPlayers.reduce((s, p) => s + p.sprints, 0);
+    const highIntensity = teamPlayers.reduce((s, p) => s + p.highIntensityRuns, 0);
+    const recoveredBalls = teamPlayers.reduce((s, p) => s + p.recoveredBalls, 0);
+    const tackles = teamPlayers.reduce((s, p) => s + p.tackles, 0);
+    const fouls = teamPlayers.reduce((s, p) => s + p.fouls, 0);
+    const maxSpeed = Math.max(...teamPlayers.map(p => p.maxSpeed), 0);
+    const weightedAverageSpeed = teamPlayers.reduce((s, p) => s + p.averageSpeed * p.minutes, 0);
 
     return {
-      players: players.length,
+      players: teamPlayers.length,
       usedPlayers,
       playedMatches,
       totalAppearances,
@@ -459,11 +461,11 @@ export default function Home() {
       minutesPerAppearance: totalAppearances > 0 ? totalMinutes / totalAppearances : 0,
       hasVeoData: shots > 0 || passes > 0 || distance > 0 || sprints > 0 || highIntensity > 0 || recoveredBalls > 0 || tackles > 0 || fouls > 0 || maxSpeed > 0 || weightedAverageSpeed > 0,
     };
-  }, [players, matches, teamMatches]);
+  }, [teamPlayers, teamStats, teamMatches]);
 
   const matchSummary = useMemo(() => {
     const map = new Map<string, { date: string; match: string; goals: number; assists: number; cards: number; minutes: number; appearances: number }>();
-    matches.forEach(m => {
+    teamStats.forEach(m => {
       const current = map.get(m.matchId) ?? { date: m.date, match: m.match, goals: 0, assists: 0, cards: 0, minutes: 0, appearances: 0 };
       current.goals += m.goals;
       current.assists += m.assists;
@@ -473,25 +475,25 @@ export default function Home() {
       map.set(m.matchId, current);
     });
     return [...map.values()].sort((a,b) => a.date.localeCompare(b.date));
-  }, [matches]);
+  }, [teamStats]);
 
   const rankings = useMemo(() => ({
-    goals90: [...players].sort((a,b) => b.goalsPer90 - a.goalsPer90).map(p => ({name:p.name,value:p.goalsPer90})),
-    minutes: [...players].sort((a,b) => b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.minutes})),
-    appearances: [...players].sort((a,b) => b.appearances - a.appearances || b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.appearances})),
-    sprints90: [...players].filter(p => p.sprints > 0).sort((a,b) => b.sprintsPer90 - a.sprintsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.sprintsPer90})),
-    highIntensity90: [...players].filter(p => p.highIntensityRuns > 0).sort((a,b) => b.highIntensityRunsPer90 - a.highIntensityRunsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.highIntensityRunsPer90})),
-    recoveredBalls90: [...players].filter(p => p.recoveredBalls > 0).sort((a,b) => b.recoveredBallsPer90 - a.recoveredBallsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.recoveredBallsPer90})),
-    tackles90: [...players].filter(p => p.tackles > 0).sort((a,b) => b.tacklesPer90 - a.tacklesPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.tacklesPer90})),
-  }), [players]);
+    goals90: [...teamPlayers].sort((a,b) => b.goalsPer90 - a.goalsPer90).map(p => ({name:p.name,value:p.goalsPer90})),
+    minutes: [...teamPlayers].sort((a,b) => b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.minutes})),
+    appearances: [...teamPlayers].sort((a,b) => b.appearances - a.appearances || b.minutes - a.minutes || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.appearances})),
+    sprints90: [...teamPlayers].filter(p => p.sprints > 0).sort((a,b) => b.sprintsPer90 - a.sprintsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.sprintsPer90})),
+    highIntensity90: [...teamPlayers].filter(p => p.highIntensityRuns > 0).sort((a,b) => b.highIntensityRunsPer90 - a.highIntensityRunsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.highIntensityRunsPer90})),
+    recoveredBalls90: [...teamPlayers].filter(p => p.recoveredBalls > 0).sort((a,b) => b.recoveredBallsPer90 - a.recoveredBallsPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.recoveredBallsPer90})),
+    tackles90: [...teamPlayers].filter(p => p.tackles > 0).sort((a,b) => b.tacklesPer90 - a.tacklesPer90 || a.name.localeCompare(b.name, 'it')).map(p => ({name:p.name,value:p.tacklesPer90})),
+  }), [teamPlayers]);
   const competitionRankings = useMemo(() => {
-    const playerNameById = new Map(players.map(p => [p.playerId, p.name]));
+    const playerNameById = new Map(teamPlayers.map(p => [p.playerId, p.name]));
     const buckets = {
       CAMPIONATO: new Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>(),
       COPPA: new Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>(),
     };
 
-    matches.forEach(m => {
+    teamStats.forEach(m => {
       const bucket = buckets[m.competition === 'COPPA' ? 'COPPA' : 'CAMPIONATO'];
       const current = bucket.get(m.playerId) ?? {
         name: m.playerName || playerNameById.get(m.playerId) || m.playerId,
@@ -535,7 +537,7 @@ export default function Home() {
         discipline: sortedDisciplineRows(buckets.COPPA),
       },
     };
-  }, [matches, players]);
+  }, [teamStats, teamPlayers]);
   const allTacticalPoints = useMemo(() => [
     ...tactics.averagePositions,
     ...tactics.shots,
@@ -571,7 +573,7 @@ export default function Home() {
     return teamMatches.filter(match => matchIds.has(match.matchId));
   }, [allTacticalPoints, teamMatches]);
   const tacticalPlayerOptions = useMemo(() => {
-    const playerLabels = new Map(players.map(p => [p.playerId, p.name]));
+    const playerLabels = new Map(teamPlayers.map(p => [p.playerId, p.name]));
     allTacticalPoints.forEach(point => {
       const key = point.playerId || point.playerName;
       if (key && !playerLabels.has(key)) playerLabels.set(key, point.playerName || key);
@@ -582,7 +584,7 @@ export default function Home() {
       .filter(([playerId]) => playerIds.has(playerId))
       .map(([playerId, name]) => ({ playerId, name }))
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
-  }, [allTacticalPoints, players]);
+  }, [allTacticalPoints, teamPlayers]);
   const selectedTacticalPoint = useMemo(() =>
     filteredTacticalPoints.find(point => point.id === selectedTacticalPointId) ?? activeTacticalPoints[0] ?? filteredTacticalPoints[0] ?? null,
   [activeTacticalPoints, filteredTacticalPoints, selectedTacticalPointId]);
@@ -633,7 +635,10 @@ export default function Home() {
 
     <nav className="tabs" aria-label="Sezioni dashboard">
       <button className={view === 'player' ? 'active' : ''} onClick={() => setView('player')}>Giocatore</button>
-      {data.role === 'STAFF' && <><button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button><button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button><button className={view === 'tactics' ? 'active' : ''} onClick={() => setView('tactics')}>Tattica</button><button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button></>}
+      <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button>
+      {data.role === 'STAFF' && <button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button>}
+      <button className={view === 'tactics' ? 'active' : ''} onClick={() => setView('tactics')}>Tattica</button>
+      {data.role === 'STAFF' && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
     </nav>
 
     {view === 'player' && <>
@@ -743,7 +748,7 @@ export default function Home() {
       </section>
     </>}
 
-    {view === 'tactics' && data.role === 'STAFF' && <>
+    {view === 'tactics' && <>
       <section className="hero"><div><p className="eyebrow">TACTICAL ROOM</p><h1>Tattica</h1><p>Posizioni medie, shot map, tackle map e distribuzione per zone.</p></div><div className="heroMeta"><span>Punti filtrati</span><strong>{filteredTacticalPoints.length}</strong></div></section>
       <section className="panel tacticsControls">
         <label className="selector">Partita<select value={tacticalMatchId} onChange={e => { setTacticalMatchId(e.target.value); setSelectedTacticalPointId(''); }}>
@@ -795,7 +800,7 @@ export default function Home() {
       </section>
     </>}
 
-    {view === 'compare' && <>
+    {view === 'compare' && data.role === 'STAFF' && <>
       <section className="hero"><div><p className="eyebrow">PLAYER COMPARE</p><h1>Confronto giocatori</h1><p>Confronto diretto sugli stessi indicatori stagionali.</p></div></section>
       <section className="compareSelectors panel"><label className="selector">Giocatore A<select value={compareA} onChange={e => setCompareA(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label><span className="versus">VS</span><label className="selector">Giocatore B<select value={compareB} onChange={e => setCompareB(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label></section>
       {a && b && <section className="compareGrid">
