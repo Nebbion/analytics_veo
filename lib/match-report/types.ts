@@ -73,6 +73,10 @@ export type MatchReportEvent = {
   playerId: string;
   jerseyNumber: number | null;
   minute: number | null;
+  injuryTime: boolean;
+  relatedPlayerId: string | null;
+  relatedPlayerName: string | null;
+  relatedJerseyNumber: number | null;
   value: number;
 };
 

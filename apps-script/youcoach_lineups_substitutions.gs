@@ -16,6 +16,7 @@
 
 var YOUCOACH_LINEUPS_SHEET = 'YOUCOACH_LINEUPS';
 var YOUCOACH_SUBSTITUTIONS_SHEET = 'YOUCOACH_SUBSTITUTIONS';
+var YOUCOACH_EVENTS_SHEET = 'YOUCOACH_EVENTS';
 var YOUCOACH_LINEUPS_HEADERS = [
   'Match_ID', 'Player_ID', 'Giocatore', 'Numero', 'Titolare', 'Ordine', 'Fonte'
 ];
@@ -23,6 +24,19 @@ var YOUCOACH_SUBSTITUTIONS_HEADERS = [
   'Match_ID', 'Minuto', 'Recupero', 'Player_Out_ID', 'Giocatore_Out',
   'Player_In_ID', 'Giocatore_In', 'Fonte'
 ];
+var YOUCOACH_EVENTS_HEADERS = [
+  'Match_ID', 'Event_Type', 'Minuto', 'Recupero', 'Player_ID', 'Giocatore',
+  'Related_Player_ID', 'Giocatore_Related', 'Fonte'
+];
+
+function youCoachOfficialEventType_(value) {
+  var type = youCoachNormalize_(value).replace(/[ -]+/g, '_');
+  if (type === 'GOAL' || type === 'GOL') return 'GOAL';
+  if (type === 'SECOND_YELLOW_CARD' || type === 'SECONDA_AMMONIZIONE') return 'SECOND_YELLOW_CARD';
+  if (type === 'YELLOW_CARD' || type === 'AMMONIZIONE') return 'YELLOW_CARD';
+  if (type === 'RED_CARD' || type === 'ESPULSIONE') return 'RED_CARD';
+  return '';
+}
 
 function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -87,20 +101,57 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
     ]);
   });
 
+  var officialEventRows = [];
+  var seenOfficialEvents = {};
+  events.forEach(function(event) {
+    var eventType = youCoachOfficialEventType_(event && event.tipo);
+    if (!eventType) return;
+
+    var playerName = youCoachText_(event.giocatore);
+    var relatedPlayerName = eventType === 'GOAL' ? youCoachText_(event.giocatore2) : '';
+    var playerId = youCoachPlayerId_(null, playerName, playerIdByName);
+    var relatedPlayerId = relatedPlayerName
+      ? youCoachPlayerId_(null, relatedPlayerName, playerIdByName)
+      : '';
+    var minute = youCoachNullableInteger_(event.minuto);
+    if (!playerId || minute === '') return;
+
+    var key = [matchId, eventType, minute, playerId, relatedPlayerId].join('|');
+    if (seenOfficialEvents[key]) return;
+    seenOfficialEvents[key] = true;
+
+    officialEventRows.push([
+      matchId,
+      eventType,
+      minute,
+      event.recupero === true || String(event.recupero).toLowerCase() === 'true',
+      playerId,
+      playerName,
+      relatedPlayerId,
+      relatedPlayerName,
+      'YOUCOACH'
+    ]);
+  });
+
   youCoachReplaceMatchRows_(spreadsheet, YOUCOACH_LINEUPS_SHEET, YOUCOACH_LINEUPS_HEADERS, matchId, lineupRows);
   youCoachReplaceMatchRows_(spreadsheet, YOUCOACH_SUBSTITUTIONS_SHEET, YOUCOACH_SUBSTITUTIONS_HEADERS, matchId, substitutionRows);
+  youCoachReplaceMatchRows_(spreadsheet, YOUCOACH_EVENTS_SHEET, YOUCOACH_EVENTS_HEADERS, matchId, officialEventRows);
 }
 
 function sincronizzaYouCoachLineupsESostituzioniSupabase_() {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var lineups = youCoachReadObjects_(spreadsheet, YOUCOACH_LINEUPS_SHEET);
   var substitutions = youCoachReadObjects_(spreadsheet, YOUCOACH_SUBSTITUTIONS_SHEET);
+  var officialEvents = youCoachReadObjects_(spreadsheet, YOUCOACH_EVENTS_SHEET);
   var matchIds = {};
 
   lineups.forEach(function(row) {
     if (row.Match_ID) matchIds[String(row.Match_ID)] = true;
   });
   substitutions.forEach(function(row) {
+    if (row.Match_ID) matchIds[String(row.Match_ID)] = true;
+  });
+  officialEvents.forEach(function(row) {
     if (row.Match_ID) matchIds[String(row.Match_ID)] = true;
   });
 
@@ -129,12 +180,31 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_() {
         };
       });
 
+    var officialEventPayload = officialEvents
+      .filter(function(row) { return String(row.Match_ID) === matchId; })
+      .map(function(row) {
+        return {
+          match_id: matchId,
+          event_type: String(row.Event_Type),
+          minuto: Number(row.Minuto),
+          recupero: row.Recupero === true || String(row.Recupero).toLowerCase() === 'true',
+          player_id: String(row.Player_ID),
+          player_name: youCoachText_(row.Giocatore),
+          related_player_id: youCoachText_(row.Related_Player_ID) || null,
+          related_player_name: youCoachText_(row.Giocatore_Related) || null,
+          fonte: youCoachText_(row.Fonte) || 'YOUCOACH'
+        };
+      });
+
     youCoachSupabaseRequest_('delete', 'match_lineups?match_id=eq.' + encodeURIComponent(matchId));
     if (lineupPayload.length) youCoachSupabaseRequest_('post', 'match_lineups', lineupPayload);
 
     // La DELETE viene eseguita anche quando la gara non ha sostituzioni.
     youCoachSupabaseRequest_('delete', 'match_substitutions?match_id=eq.' + encodeURIComponent(matchId));
     if (substitutionPayload.length) youCoachSupabaseRequest_('post', 'match_substitutions', substitutionPayload);
+
+    youCoachSupabaseRequest_('delete', 'match_events?match_id=eq.' + encodeURIComponent(matchId));
+    if (officialEventPayload.length) youCoachSupabaseRequest_('post', 'match_events', officialEventPayload);
   });
 }
 

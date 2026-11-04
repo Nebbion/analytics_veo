@@ -30,6 +30,16 @@ type SubstitutionRow = {
   player_out_id: string | null;
   player_in_id: string | null;
 };
+type OfficialEventRow = {
+  match_id: string;
+  event_type: string;
+  minuto: number;
+  recupero: boolean;
+  player_id: string;
+  player_name: string;
+  related_player_id: string | null;
+  related_player_name: string | null;
+};
 
 const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -176,6 +186,10 @@ const buildOfficialEvents = (players: MatchReportPlayer[]) => {
       playerId: player.playerId,
       jerseyNumber: player.jerseyNumber,
       minute: null,
+      injuryTime: false,
+      relatedPlayerId: null,
+      relatedPlayerName: null,
+      relatedJerseyNumber: null,
       value,
     });
   };
@@ -188,6 +202,76 @@ const buildOfficialEvents = (players: MatchReportPlayer[]) => {
   });
 
   return events;
+};
+
+const buildDetailedOfficialEvents = (
+  rows: OfficialEventRow[],
+  playerNameMap: Map<string, string>,
+  jerseyByPlayerId: Map<string, number>
+) => rows
+  .map((row): MatchReportEvent | null => {
+    const eventType = row.event_type.toUpperCase();
+    const type = eventType === 'GOAL'
+      ? 'goal'
+      : eventType === 'YELLOW_CARD'
+        ? 'yellowCard'
+        : eventType === 'RED_CARD' || eventType === 'SECOND_YELLOW_CARD'
+          ? 'redCard'
+          : null;
+
+    if (!type) return null;
+
+    const label = eventType === 'GOAL'
+      ? 'Gol'
+      : eventType === 'YELLOW_CARD'
+        ? 'Ammonizione'
+        : eventType === 'SECOND_YELLOW_CARD'
+          ? 'Seconda ammonizione'
+          : 'Espulsione';
+
+    return {
+      type,
+      label,
+      playerName: playerNameMap.get(row.player_id) || row.player_name || row.player_id,
+      playerId: row.player_id,
+      jerseyNumber: jerseyByPlayerId.get(row.player_id) ?? null,
+      minute: row.minuto,
+      injuryTime: row.recupero,
+      relatedPlayerId: row.related_player_id,
+      relatedPlayerName: row.related_player_id
+        ? playerNameMap.get(row.related_player_id) || row.related_player_name || row.related_player_id
+        : row.related_player_name || null,
+      relatedJerseyNumber: row.related_player_id
+        ? jerseyByPlayerId.get(row.related_player_id) ?? null
+        : null,
+      value: 1,
+    };
+  })
+  .filter((event): event is MatchReportEvent => event !== null)
+  .sort((a, b) =>
+    (a.minute ?? Number.MAX_SAFE_INTEGER) - (b.minute ?? Number.MAX_SAFE_INTEGER) ||
+    a.label.localeCompare(b.label, 'it')
+  );
+
+const mergeOfficialEvents = (
+  detailedEvents: MatchReportEvent[],
+  players: MatchReportPlayer[]
+) => {
+  if (!detailedEvents.length) return buildOfficialEvents(players);
+
+  const totals = buildOfficialEvents(players);
+  const missingTotals = totals.flatMap(total => {
+    const detailedCount = total.type === 'assist'
+      ? detailedEvents.filter(event => event.relatedPlayerId === total.playerId).length
+      : detailedEvents.filter(event =>
+          event.type === total.type &&
+          event.playerId === total.playerId
+        ).length;
+    const remaining = total.value - detailedCount;
+    return remaining > 0 ? [{ ...total, value: remaining }] : [];
+  });
+
+  return [...detailedEvents, ...missingTotals];
 };
 
 export async function GET(
@@ -231,7 +315,7 @@ export async function GET(
     return NextResponse.json({ error: 'Player_ID non associato al profilo utente.' }, { status: 403 });
   }
 
-  const [matchResult, statsResult, playersResult, positionsResult, eventsResult, lineupResult, substitutionsResult] = await Promise.all([
+  const [matchResult, statsResult, playersResult, positionsResult, eventsResult, lineupResult, substitutionsResult, officialEventsResult] = await Promise.all([
     supabase.from('matches').select('*').eq('match_id', matchId).maybeSingle(),
     supabase.from('player_match_stats').select('*').eq('match_id', matchId),
     supabase.from('players').select('player_id,nome'),
@@ -239,6 +323,7 @@ export async function GET(
     supabase.from('veo_event_positions').select('*').eq('match_id', matchId),
     supabase.from('match_lineups').select('match_id,player_id,numero,titolare,ordine').eq('match_id', matchId),
     supabase.from('match_substitutions').select('match_id,minuto,recupero,player_out_id,player_in_id').eq('match_id', matchId),
+    supabase.from('match_events').select('match_id,event_type,minuto,recupero,player_id,player_name,related_player_id,related_player_name').eq('match_id', matchId),
   ]);
 
   if (matchResult.error) {
@@ -280,6 +365,7 @@ export async function GET(
   const statsRows = (statsResult.data ?? []) as DataRow[];
   const lineupRows = (lineupResult.data ?? []) as LineupRow[];
   const substitutionRows = (substitutionsResult.data ?? []) as SubstitutionRow[];
+  const officialEventRows = (officialEventsResult.data ?? []) as OfficialEventRow[];
 
   const jerseyByPlayerId = new Map<string, number>();
   lineupRows.forEach(row => {
@@ -358,6 +444,12 @@ export async function GET(
       playerInName: row.player_in_id ? playerNameMap.get(row.player_in_id) || row.player_in_id : '',
     }))
     .sort((a, b) => a.minute - b.minute || a.playerOutName.localeCompare(b.playerOutName, 'it'));
+
+  const detailedOfficialEvents = buildDetailedOfficialEvents(
+    officialEventRows,
+    playerNameMap,
+    jerseyByPlayerId
+  );
 
   const toPoint = (
     row: DataRow,
@@ -438,10 +530,15 @@ export async function GET(
       averagePositions: buildZoneDistribution('Posizione media', averagePositions),
       events: buildZoneDistribution('Eventi Veo', eventPoints),
     },
-    officialEvents: buildOfficialEvents(players),
+    officialEvents: mergeOfficialEvents(detailedOfficialEvents, players),
     notes: [
       lineup.length ? 'Formazione e panchina da match_lineups (YouCoach).' : 'Nessuna formazione YouCoach disponibile per questa partita.',
       substitutions.length ? 'Sostituzioni da match_substitutions (YouCoach).' : 'Nessuna sostituzione YouCoach disponibile per questa partita.',
+      detailedOfficialEvents.length
+        ? 'Gol, assist associati e cartellini con minuto da match_events (YouCoach).'
+        : officialEventsResult.error
+          ? 'Eventi ufficiali dettagliati non ancora disponibili; vengono mostrati i totali della partita.'
+          : 'Nessun evento ufficiale dettagliato disponibile; vengono mostrati i totali della partita.',
       averagePositions.length ? 'Posizioni medie da veo_position_stats.x_media_pct / y_media_pct.' : 'Nessuna posizione media Veo disponibile per questa partita.',
       eventPoints.length ? 'Mappe eventi da veo_event_positions.' : 'Nessun evento Veo disponibile per questa partita.',
     ],

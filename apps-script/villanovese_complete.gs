@@ -3717,6 +3717,7 @@ function rimuoviPartita() {
     'YOUCOACH_STATS',
     'YOUCOACH_LINEUPS',
     'YOUCOACH_SUBSTITUTIONS',
+    'YOUCOACH_EVENTS',
     'VEO_MATCHES',
     'PLAYER_STATS',
     'VEO_REPORT_STATS',
@@ -4016,6 +4017,7 @@ function snapshotImport_(ss) {
     youcoach: contaRigheDati_(ss, 'YOUCOACH_STATS'),
     lineups: contaRigheDati_(ss, 'YOUCOACH_LINEUPS'),
     substitutions: contaRigheDati_(ss, 'YOUCOACH_SUBSTITUTIONS'),
+    officialEvents: contaRigheDati_(ss, 'YOUCOACH_EVENTS'),
     veoMatches: contaRigheDati_(ss, 'VEO_MATCHES'),
     veoRaw: contaRigheDati_(ss, 'VEO_RAW'),
     playerStats: contaRigheDati_(ss, 'PLAYER_STATS'),
@@ -4537,6 +4539,60 @@ function sincronizzaSupabaseIncrementale() {
     }
   }
 
+  // ==========================================
+  // MATCH_EVENTS - gol, assist associati e cartellini
+  // ==========================================
+
+  let nuoviEventiUfficiali = [];
+  const officialEventsSheet = ss.getSheetByName('YOUCOACH_EVENTS');
+
+  if (officialEventsSheet) {
+    const localOfficialEvents = sheetToObjects(officialEventsSheet)
+      .filter(row => row.Match_ID && row.Event_Type && row.Player_ID)
+      .map(row => ({
+        match_id: String(row.Match_ID).trim(),
+        event_type: String(row.Event_Type).trim(),
+        minuto: Number(row.Minuto || 0),
+        recupero: row.Recupero === true || String(row.Recupero).toLowerCase() === 'true',
+        player_id: String(row.Player_ID).trim(),
+        player_name: String(row.Giocatore || '').trim(),
+        related_player_id: String(row.Related_Player_ID || '').trim() || null,
+        related_player_name: String(row.Giocatore_Related || '').trim() || null,
+        fonte: String(row.Fonte || 'YOUCOACH').trim()
+      }));
+
+    const remoteOfficialEvents = supabaseGet_(
+      supabaseUrl,
+      supabaseKey,
+      'match_events?select=match_id,event_type,minuto,player_id,related_player_id'
+    );
+
+    const officialEventKey = row => [
+      String(row.match_id || '').trim(),
+      String(row.event_type || '').trim(),
+      String(row.minuto || ''),
+      String(row.player_id || '').trim(),
+      String(row.related_player_id || '').trim()
+    ].join('|');
+
+    const remoteOfficialEventKeys = new Set(
+      remoteOfficialEvents.map(officialEventKey)
+    );
+
+    nuoviEventiUfficiali = localOfficialEvents.filter(row =>
+      !remoteOfficialEventKeys.has(officialEventKey(row))
+    );
+
+    if (nuoviEventiUfficiali.length) {
+      supabaseInsert_(
+        supabaseUrl,
+        supabaseKey,
+        'match_events',
+        nuoviEventiUfficiali
+      );
+    }
+  }
+
   Logger.log('================================');
   Logger.log('SUPABASE INCREMENTALE OK');
   Logger.log('Nuovi players: ' + nuoviPlayers.length);
@@ -4546,6 +4602,7 @@ function sincronizzaSupabaseIncrementale() {
   Logger.log('Nuovi eventi: ' + nuoviEventi.length);
   Logger.log('Nuove lineup: ' + nuoveLineups.length);
   Logger.log('Nuove sostituzioni: ' + nuoveSostituzioni.length);
+  Logger.log('Nuovi eventi ufficiali: ' + nuoviEventiUfficiali.length);
   Logger.log('================================');
 
   SpreadsheetApp.getActive().toast(
@@ -4553,7 +4610,8 @@ function sincronizzaSupabaseIncrementale() {
     nuoviMatches.length + ' nuovi match, ' +
     nuoveStats.length + ' nuove stats, ' +
     nuoveLineups.length + ' lineup, ' +
-    nuoveSostituzioni.length + ' cambi.',
+    nuoveSostituzioni.length + ' cambi, ' +
+    nuoviEventiUfficiali.length + ' eventi ufficiali.',
     '⚽ Villanovese',
     5
   );
@@ -5292,12 +5350,13 @@ if (veoEventSheet) {
   Logger.log(`Stats stagionali: ${seasonStats.length}`);
   Logger.log(`Lineup YouCoach: ${youCoachSync.lineups}`);
   Logger.log(`Sostituzioni YouCoach: ${youCoachSync.substitutions}`);
+  Logger.log(`Eventi ufficiali YouCoach: ${youCoachSync.events}`);
   Logger.log(`Matches eliminati: ${oldMatches.length}`);
   Logger.log('================================');
   Logger.log('================================');
 
   SpreadsheetApp.getActive().toast(
-    `Supabase sincronizzato: ${players.length} giocatori, ${matches.length} partite, ${stats.length} statistiche partita, ${youCoachSync.lineups} lineup, ${youCoachSync.substitutions} sostituzioni.`,
+    `Supabase sincronizzato: ${players.length} giocatori, ${matches.length} partite, ${stats.length} statistiche partita, ${youCoachSync.lineups} lineup, ${youCoachSync.substitutions} sostituzioni, ${youCoachSync.events} eventi ufficiali.`,
     '⚽ Villanovese',
     5
   );
@@ -5659,6 +5718,14 @@ function importaReportYouCoach() {
         matchStatsEsistenti.has(matchId) &&
         matchLineupsEsistenti.has(matchId)
       ) {
+
+        // Aggiorna comunque formazione, cambi ed eventi ufficiali:
+        // consente il backfill dei gol con minuto/assist per report gia importati.
+        salvaYouCoachLineupsESostituzioni_(
+          matchId,
+          info,
+          playerMap
+        );
 
         Logger.log(
           '⏭️ YouCoach già importato: ' +
@@ -6617,9 +6684,11 @@ function parseYouCoachMhtml_(html) {
           e.event_type || '',
 
         minuto:
-          Number(
-            e.minutes || 0
-          ),
+          e.minutes !== undefined &&
+          e.minutes !== null &&
+          String(e.minutes).trim() !== ''
+            ? Number(e.minutes)
+            : null,
 
         recupero:
           String(
@@ -6718,17 +6787,19 @@ function pulisciHtmlYouCoach_(testo) {
 
 
 /*************************************************
- * YOUCOACH — FORMAZIONI E SOSTITUZIONI
+ * YOUCOACH — FORMAZIONI, SOSTITUZIONI ED EVENTI
  *
  * Fogli generati:
  * - YOUCOACH_LINEUPS
  * - YOUCOACH_SUBSTITUTIONS
+ * - YOUCOACH_EVENTS
  *
  * Fonte ufficiale: report YouCoach MHTML.
  *************************************************/
 
 var YOUCOACH_LINEUPS_SHEET = 'YOUCOACH_LINEUPS';
 var YOUCOACH_SUBSTITUTIONS_SHEET = 'YOUCOACH_SUBSTITUTIONS';
+var YOUCOACH_EVENTS_SHEET = 'YOUCOACH_EVENTS';
 
 var YOUCOACH_LINEUPS_HEADERS = [
   'Match_ID',
@@ -6750,6 +6821,34 @@ var YOUCOACH_SUBSTITUTIONS_HEADERS = [
   'Giocatore_In',
   'Fonte'
 ];
+
+var YOUCOACH_EVENTS_HEADERS = [
+  'Match_ID',
+  'Event_Type',
+  'Minuto',
+  'Recupero',
+  'Player_ID',
+  'Giocatore',
+  'Related_Player_ID',
+  'Giocatore_Related',
+  'Fonte'
+];
+
+
+function youCoachOfficialEventType_(value) {
+  const type = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[ -]+/g, '_');
+
+  if (type === 'GOAL' || type === 'GOL') return 'GOAL';
+  if (type === 'SECOND_YELLOW_CARD' || type === 'SECONDA_AMMONIZIONE') {
+    return 'SECOND_YELLOW_CARD';
+  }
+  if (type === 'YELLOW_CARD' || type === 'AMMONIZIONE') return 'YELLOW_CARD';
+  if (type === 'RED_CARD' || type === 'ESPULSIONE') return 'RED_CARD';
+  return '';
+}
 
 
 /*************************************************
@@ -6981,6 +7080,108 @@ function salvaYouCoachLineupsESostituzioni_(
   });
 
 
+  // ==========================================
+  // GOL E CARTELLINI UFFICIALI
+  // Per i gol, giocatore2 e il giocatore dell'assist.
+  // ==========================================
+
+  const officialEventRows = [];
+  const seenOfficialEvents = new Set();
+
+  eventi.forEach(evento => {
+
+    const eventType =
+      youCoachOfficialEventType_(
+        evento && evento.tipo
+      );
+
+    if (!eventType) {
+      return;
+    }
+
+    const playerName =
+      youCoachText_(evento.giocatore);
+
+    const relatedPlayerName =
+      eventType === 'GOAL'
+        ? youCoachText_(evento.giocatore2)
+        : '';
+
+    const playerKey =
+      normalizzaNomeYouCoach_(playerName);
+
+    const relatedPlayerKey =
+      normalizzaNomeYouCoach_(relatedPlayerName);
+
+    const player =
+      playerMap && playerMap[playerKey]
+        ? playerMap[playerKey]
+        : null;
+
+    const relatedPlayer =
+      relatedPlayerName &&
+      playerMap &&
+      playerMap[relatedPlayerKey]
+        ? playerMap[relatedPlayerKey]
+        : null;
+
+    const playerId =
+      player && player.playerId
+        ? String(player.playerId).trim()
+        : '';
+
+    const relatedPlayerId =
+      relatedPlayer && relatedPlayer.playerId
+        ? String(relatedPlayer.playerId).trim()
+        : '';
+
+    const minuto =
+      youCoachNullableInteger_(evento.minuto);
+
+    if (!playerId || minuto === '') {
+      Logger.log(
+        '⚠️ YOUCOACH_EVENTS: evento incompleto ignorato | ' +
+        matchId +
+        ' | tipo=' +
+        eventType +
+        ' | giocatore=' +
+        playerName +
+        ' | minuto=' +
+        minuto
+      );
+      return;
+    }
+
+    const uniqueKey = [
+      matchId,
+      eventType,
+      minuto,
+      playerId,
+      relatedPlayerId
+    ].join('|');
+
+    if (seenOfficialEvents.has(uniqueKey)) {
+      return;
+    }
+
+    seenOfficialEvents.add(uniqueKey);
+
+    officialEventRows.push([
+      matchId,
+      eventType,
+      minuto,
+      evento.recupero === true ||
+        String(evento.recupero).toLowerCase() === 'true',
+      playerId,
+      player ? player.nome : playerName,
+      relatedPlayerId,
+      relatedPlayer ? relatedPlayer.nome : relatedPlayerName,
+      'YOUCOACH'
+    ]);
+
+  });
+
+
   youCoachReplaceMatchRows_(
     ss,
     YOUCOACH_LINEUPS_SHEET,
@@ -6997,6 +7198,14 @@ function salvaYouCoachLineupsESostituzioni_(
     substitutionRows
   );
 
+  youCoachReplaceMatchRows_(
+    ss,
+    YOUCOACH_EVENTS_SHEET,
+    YOUCOACH_EVENTS_HEADERS,
+    matchId,
+    officialEventRows
+  );
+
 
   Logger.log(
     '✅ YOUCOACH formazione salvata | ' +
@@ -7004,14 +7213,16 @@ function salvaYouCoachLineupsESostituzioni_(
     ' | titolari/riserve=' +
     lineupRows.length +
     ' | sostituzioni=' +
-    substitutionRows.length
+    substitutionRows.length +
+    ' | eventi=' +
+    officialEventRows.length
   );
 
 }
 
 
 /*************************************************
- * SYNC FORMAZIONI + SOSTITUZIONI → SUPABASE
+ * SYNC FORMAZIONI + SOSTITUZIONI + EVENTI → SUPABASE
  *************************************************/
 
 function sincronizzaYouCoachLineupsESostituzioniSupabase_(
@@ -7033,6 +7244,12 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
     youCoachReadObjects_(
       ss,
       YOUCOACH_SUBSTITUTIONS_SHEET
+    );
+
+  const officialEvents =
+    youCoachReadObjects_(
+      ss,
+      YOUCOACH_EVENTS_SHEET
     );
 
   const matchIds = new Set();
@@ -7059,9 +7276,21 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
 
   });
 
+  officialEvents.forEach(row => {
+
+    const matchId =
+      String(row.Match_ID || '').trim();
+
+    if (matchId) {
+      matchIds.add(matchId);
+    }
+
+  });
+
 
   let totaleLineups = 0;
   let totaleSubstitutions = 0;
+  let totaleEvents = 0;
   let matchSaltati = 0;
 
 
@@ -7073,7 +7302,7 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
     ) {
 
       Logger.log(
-        '⚠️ Lineup/sostituzioni NON sincronizzate: ' +
+        '⚠️ Lineup/sostituzioni/eventi NON sincronizzati: ' +
         matchId +
         ' non è ancora presente nell’elenco matches da sincronizzare.'
       );
@@ -7159,6 +7388,32 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
           row.player_in_id
         );
 
+    const officialEventPayload =
+      officialEvents
+        .filter(row =>
+          String(row.Match_ID || '').trim() ===
+          matchId
+        )
+        .map(row => ({
+          match_id: matchId,
+          event_type: String(row.Event_Type || '').trim(),
+          minuto: Number(row.Minuto || 0),
+          recupero:
+            row.Recupero === true ||
+            String(row.Recupero).toLowerCase() === 'true',
+          player_id: String(row.Player_ID || '').trim(),
+          player_name: String(row.Giocatore || '').trim(),
+          related_player_id:
+            String(row.Related_Player_ID || '').trim() || null,
+          related_player_name:
+            String(row.Giocatore_Related || '').trim() || null,
+          fonte: String(row.Fonte || 'YOUCOACH').trim()
+        }))
+        .filter(row =>
+          row.event_type &&
+          row.player_id
+        );
+
 
     // Reimport idempotente: cancella solo la partita
     // interessata e reinserisce la versione corrente.
@@ -7174,6 +7429,13 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
       supabaseUrl,
       supabaseKey,
       'match_substitutions',
+      `match_id=eq.${encodeURIComponent(matchId)}`
+    );
+
+    supabaseDelete_(
+      supabaseUrl,
+      supabaseKey,
+      'match_events',
       `match_id=eq.${encodeURIComponent(matchId)}`
     );
 
@@ -7201,6 +7463,17 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
 
     }
 
+    if (officialEventPayload.length > 0) {
+
+      supabaseInsert_(
+        supabaseUrl,
+        supabaseKey,
+        'match_events',
+        officialEventPayload
+      );
+
+    }
+
 
     totaleLineups +=
       lineupPayload.length;
@@ -7208,14 +7481,19 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
     totaleSubstitutions +=
       substitutionPayload.length;
 
+    totaleEvents +=
+      officialEventPayload.length;
+
 
     Logger.log(
-      '✅ Lineup/Sostituzioni Supabase | ' +
+      '✅ Lineup/Sostituzioni/Eventi Supabase | ' +
       matchId +
       ' | lineup=' +
       lineupPayload.length +
       ' | sostituzioni=' +
-      substitutionPayload.length
+      substitutionPayload.length +
+      ' | eventi=' +
+      officialEventPayload.length
     );
 
   });
@@ -7224,6 +7502,7 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
   return {
     lineups: totaleLineups,
     substitutions: totaleSubstitutions,
+    events: totaleEvents,
     skippedMatches: matchSaltati
   };
 
