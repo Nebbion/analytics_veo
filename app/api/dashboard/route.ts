@@ -102,6 +102,38 @@ const matchResult = (row: MatchRow) => {
   return homeGoals !== null && awayGoals !== null ? `${homeGoals} - ${awayGoals}` : '';
 };
 
+const villanoveseScore = (row: MatchRow) => {
+  const result = matchResult(row);
+  const score = result.match(/(\d+)\s*[-–—]\s*(\d+)/);
+
+  if (!score) return null;
+
+  const firstGoals = Number(score[1]);
+  const secondGoals = Number(score[2]);
+  const homeAway = rowText(row, ['casa_trasferta', 'home_away', 'venue', 'sede']).toLowerCase();
+  let villanoveseIsFirst: boolean | null = null;
+
+  if (/casa|home/.test(homeAway)) villanoveseIsFirst = true;
+  if (/trasferta|away/.test(homeAway)) villanoveseIsFirst = false;
+
+  if (villanoveseIsFirst === null) {
+    const teamIndex = row.partita.toLowerCase().indexOf('villanovese');
+    const separatorIndex = row.partita.search(/\s[-–—]\s/);
+    if (teamIndex >= 0 && separatorIndex >= 0) villanoveseIsFirst = teamIndex < separatorIndex;
+  }
+
+  if (villanoveseIsFirst === null) return null;
+
+  const teamGoals = villanoveseIsFirst ? firstGoals : secondGoals;
+  const opponentGoals = villanoveseIsFirst ? secondGoals : firstGoals;
+
+  return {
+    teamGoals,
+    opponentGoals,
+    outcome: (teamGoals > opponentGoals ? 'V' : teamGoals < opponentGoals ? 'P' : 'N') as 'V' | 'N' | 'P',
+  };
+};
+
 const per90 = (value: number, minutes: number) =>
   minutes > 0 ? value * 90 / minutes : 0;
 
@@ -650,6 +682,7 @@ export async function GET() {
   // Tutti gli utenti autenticati possono vedere l'elenco delle partite,
   // mentre le statistiche restano filtrate dal ruolo/RLS.
   const teamMatches = allMatches.map(m => {
+    const score = villanoveseScore(m);
     const starters = [...new Map(
       (startersByMatchId.get(m.match_id) ?? []).map(starter => [starter.playerId || starter.name, starter])
     ).values()]
@@ -665,6 +698,9 @@ export async function GET() {
       match: m.partita,
       competition: competitionLabel(m),
       result: matchResult(m),
+      teamGoals: score?.teamGoals ?? null,
+      opponentGoals: score?.opponentGoals ?? null,
+      outcome: score?.outcome ?? null,
       homeAway: rowText(m, ['casa_trasferta', 'home_away', 'venue', 'sede']),
       starters,
       summary: matchSummaryById.get(m.match_id) ?? null,

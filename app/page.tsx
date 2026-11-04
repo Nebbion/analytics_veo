@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { ChampionshipDashboard } from '../components/ChampionshipDashboard';
 
 type Player = {
   playerId: string; name: string; appearances: number; minutes: number; goals: number; goalsPer90: number;
@@ -28,6 +29,9 @@ type TeamMatch = {
   match: string;
   competition: 'CAMPIONATO' | 'COPPA';
   result: string;
+  teamGoals: number | null;
+  opponentGoals: number | null;
+  outcome: 'V' | 'N' | 'P' | null;
   homeAway: string;
   starters: { playerId: string; name: string; listNumber: number | null }[];
   summary: {
@@ -278,7 +282,7 @@ export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState('');
-  const [view, setView] = useState<'player' | 'team' | 'minutes' | 'tactics' | 'compare'>('player');
+  const [view, setView] = useState<'home' | 'player' | 'team' | 'minutes' | 'tactics' | 'compare'>('home');
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
   const [tacticalMode, setTacticalMode] = useState<TacticalMode>('average');
@@ -292,6 +296,7 @@ export default function Home() {
       .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Errore API'); return json as Data; })
       .then(json => {
         setData(json);
+        setView(json.role === 'GIOCATORE' ? 'player' : 'home');
         const first = json.players?.[0];
         const second = json.players?.[1];
         if (first) setSelected(first.name);
@@ -634,12 +639,15 @@ export default function Home() {
     </header>
 
     <nav className="tabs" aria-label="Sezioni dashboard">
+      {data.role === 'STAFF' && <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>}
       <button className={view === 'player' ? 'active' : ''} onClick={() => setView('player')}>Giocatore</button>
       <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button>
       {data.role === 'STAFF' && <button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button>}
       <button className={view === 'tactics' ? 'active' : ''} onClick={() => setView('tactics')}>Tattica</button>
       {data.role === 'STAFF' && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
     </nav>
+
+    {view === 'home' && data.role === 'STAFF' && <ChampionshipDashboard matches={teamMatches} />}
 
     {view === 'player' && <>
       <section className="hero"><div><p className="eyebrow">PLAYER CENTER</p><h1>{data.role === 'GIOCATORE' ? 'Profilo personale' : 'Dashboard giocatore'}</h1><p>{data.role === 'GIOCATORE' ? 'Le tue statistiche stagionali e tutte le partite della squadra.' : 'Statistiche stagionali e rendimento partita per partita.'}</p></div>{data.role === 'STAFF' && <label className="selector">Giocatore<select value={selected} onChange={e => setSelected(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label>}</section>
