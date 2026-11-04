@@ -19,6 +19,7 @@ export function MatchReportView({ report }: { report: MatchReport }) {
   }));
 
   return <>
+    <MatchOfficialEvents events={report.officialEvents} />
     <MatchOverview report={report} />
     <section className="reportMatchPeople">
       <MatchLineup lineup={report.lineup} />
@@ -42,7 +43,6 @@ export function MatchReportView({ report }: { report: MatchReport }) {
     </section>
     <PlayerMatchTable players={report.players} />
     <MatchRankings players={report.players} />
-    <MatchOfficialEvents events={report.officialEvents} />
     <section className="panel reportSection reportNotes">
       <div className="sectionTitle"><div><span className="eyebrow">NOTE</span><h2>Dati e copertura</h2></div><span>no dati inventati</span></div>
       <ul>{report.notes.map(note => <li key={note}>{note}</li>)}</ul>

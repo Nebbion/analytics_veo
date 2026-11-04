@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 type ChampionshipMatch = {
   matchId: string;
   date: string;
@@ -19,8 +21,30 @@ type ChampionshipPlayerStat = {
   playerId: string;
   playerName: string;
   competition: 'CAMPIONATO' | 'COPPA';
+  goals: number;
+  assists: number;
   yellowCards: number;
   redCards: number;
+};
+
+type Standing = {
+  position: number;
+  team: string;
+  points: number;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+};
+
+type StandingsResponse = {
+  competition: string;
+  updatedAt: string;
+  sourceUrl: string;
+  rows: Standing[];
 };
 
 const number = (value: number) => value.toLocaleString('it-IT');
@@ -54,6 +78,57 @@ const opponentLabel = (match: string) => {
 
 function Kpi({ label, value, accent = false }: { label: string; value: string | number; accent?: boolean }) {
   return <div className={`championshipKpi ${accent ? 'accent' : ''}`}><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function LeagueStandings() {
+  const [data, setData] = useState<StandingsResponse | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch('/api/championship/standings', { signal: controller.signal })
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Classifica non disponibile');
+        return payload as StandingsResponse;
+      })
+      .then(setData)
+      .catch(fetchError => {
+        if (fetchError instanceof DOMException && fetchError.name === 'AbortError') return;
+        setError(fetchError instanceof Error ? fetchError.message : 'Classifica non disponibile');
+      });
+
+    return () => controller.abort();
+  }, []);
+
+  return <section className="panel tablePanel leagueStandingsPanel">
+    <div className="sectionTitle">
+      <div><span className="eyebrow">CLASSIFICA AGGIORNATA</span><h2>{data?.competition ?? 'Prima Categoria - Girone E'}</h2></div>
+      <a className="standingsSource" href={data?.sourceUrl ?? 'https://www.tuttocampo.it/Veneto/PrimaCategoria/GironeE/Classifica'} target="_blank" rel="noreferrer">Fonte Tuttocampo</a>
+    </div>
+    {data ? <>
+      <div className="tableWrap"><table className="leagueStandingsTable">
+        <thead><tr><th>#</th><th>Squadra</th><th>PT</th><th>G</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th></tr></thead>
+        <tbody>{data.rows.map(row => <tr className={/villanovese/i.test(row.team) ? 'currentTeam' : ''} key={row.team}>
+          <td>{row.position}</td><td>{row.team}</td><td><strong>{row.points}</strong></td><td>{row.played}</td><td>{row.wins}</td><td>{row.draws}</td><td>{row.losses}</td><td>{row.goalsFor}</td><td>{row.goalsAgainst}</td><td>{row.goalDifference > 0 ? '+' : ''}{row.goalDifference}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="standingsUpdated">Dati recuperati il {new Date(data.updatedAt).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}</p>
+    </> : error
+      ? <div className="standingsStatus"><strong>Classifica momentaneamente non disponibile.</strong><span>{error}</span></div>
+      : <div className="standingsStatus"><strong>Caricamento classifica...</strong></div>}
+  </section>;
+}
+
+function SeasonalRanking({ title, rows }: { title: string; rows: { name: string; value: number }[] }) {
+  return <section className="panel tablePanel seasonalRankingPanel">
+    <div className="sectionTitle"><div><span className="eyebrow">STAGIONE · TUTTE LE COMPETIZIONI</span><h2>{title}</h2></div><span>totale</span></div>
+    <div className="rankingList">{rows.length
+      ? rows.slice(0, 8).map((row, index) => <div className="rankRow" key={row.name}><span className="rankNo">{index + 1}</span><strong>{row.name}</strong><span>{number(row.value)}</span></div>)
+      : <p className="rankEmpty">Nessun dato disponibile.</p>}
+    </div>
+  </section>;
 }
 
 export function ChampionshipDashboard({ matches, playerStats }: { matches: ChampionshipMatch[]; playerStats: ChampionshipPlayerStat[] }) {
@@ -90,8 +165,29 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
   const sentOffPlayers = [...discipline.values()]
     .filter(player => player.redCards > 0)
     .sort((a, b) => b.redCards - a.redCards || a.name.localeCompare(b.name, 'it'));
+  const production = new Map<string, { name: string; goals: number; assists: number }>();
+
+  playerStats.forEach(stat => {
+    const key = stat.playerId || stat.playerName;
+    if (!key) return;
+    const current = production.get(key) ?? { name: stat.playerName || stat.playerId, goals: 0, assists: 0 };
+    current.goals += stat.goals;
+    current.assists += stat.assists;
+    production.set(key, current);
+  });
+
+  const goalsRanking = [...production.values()]
+    .filter(player => player.goals > 0)
+    .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, 'it'))
+    .map(player => ({ name: player.name, value: player.goals }));
+  const assistsRanking = [...production.values()]
+    .filter(player => player.assists > 0)
+    .sort((a, b) => b.assists - a.assists || a.name.localeCompare(b.name, 'it'))
+    .map(player => ({ name: player.name, value: player.assists }));
 
   return <>
+    <LeagueStandings />
+
     <section className="hero championshipHero">
       <div><p className="eyebrow">CAMPIONATO 2026/2027</p><h1>Dashboard campionato</h1><p>Risultati, rendimento e disciplina della Villanovese.</p></div>
       <div className="heroMeta"><span>Punti</span><strong>{number(points)}</strong></div>
@@ -112,6 +208,11 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
         <Kpi label="Media punti" value={championshipMatches.length ? (points / championshipMatches.length).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'} />
       </div>
     </section>
+
+    <div className="homeProductionGrid">
+      <SeasonalRanking title="Classifica gol" rows={goalsRanking} />
+      <SeasonalRanking title="Classifica assist" rows={assistsRanking} />
+    </div>
 
     <div className="championshipHomeGrid">
       <section className="panel tablePanel championshipFormPanel">
