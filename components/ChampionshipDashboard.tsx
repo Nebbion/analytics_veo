@@ -47,7 +47,43 @@ type StandingsResponse = {
   rows: Standing[];
 };
 
+const STANDINGS_SOURCE_URL = 'https://www.tuttocampo.it/Veneto/PrimaCategoria/GironeE/Classifica';
+const STANDINGS_WIDGET_URL = 'https://www.tuttocampo.it/WidgetV2/Classifica/PREVIEW?y=2026-27&preview=VE.1.E&brand=1';
+
 const number = (value: number) => value.toLocaleString('it-IT');
+
+const standingsNumber = (value: string) => {
+  const parsed = Number(value.replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseStandings = (html: string): Standing[] => {
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const rows: Standing[] = [];
+
+  document.querySelectorAll('table.table_ranking tbody tr').forEach(row => {
+    const cells = [...row.querySelectorAll('td')].map(cell => cell.textContent?.replace(/\s+/g, ' ').trim() ?? '');
+    if (cells.length < 11) return;
+
+    const values = cells.slice(3, 11).map(standingsNumber);
+    if (!cells[2] || values.some(value => value === null)) return;
+
+    rows.push({
+      position: rows.length + 1,
+      team: cells[2],
+      points: values[0]!,
+      played: values[1]!,
+      wins: values[2]!,
+      draws: values[3]!,
+      losses: values[4]!,
+      goalsFor: values[5]!,
+      goalsAgainst: values[6]!,
+      goalDifference: values[7]!,
+    });
+  });
+
+  return rows;
+};
 
 const dateLabel = (date: string) => date
   ? new Date(`${date}T12:00:00`).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
@@ -87,11 +123,18 @@ function LeagueStandings() {
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch('/api/championship/standings', { signal: controller.signal })
+    fetch(STANDINGS_WIDGET_URL, { credentials: 'omit', mode: 'cors', signal: controller.signal })
       .then(async response => {
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || 'Classifica non disponibile');
-        return payload as StandingsResponse;
+        if (!response.ok) throw new Error(`Classifica Tuttocampo non disponibile (${response.status})`);
+        const rows = parseStandings(await response.text());
+        if (!rows.length) throw new Error('Nessuna riga valida nella classifica');
+
+        return {
+          competition: 'Prima Categoria - Girone E',
+          updatedAt: new Date().toISOString(),
+          sourceUrl: STANDINGS_SOURCE_URL,
+          rows,
+        } satisfies StandingsResponse;
       })
       .then(setData)
       .catch(fetchError => {
@@ -105,7 +148,7 @@ function LeagueStandings() {
   return <section className="panel tablePanel leagueStandingsPanel">
     <div className="sectionTitle">
       <div><span className="eyebrow">CLASSIFICA AGGIORNATA</span><h2>{data?.competition ?? 'Prima Categoria - Girone E'}</h2></div>
-      <a className="standingsSource" href={data?.sourceUrl ?? 'https://www.tuttocampo.it/Veneto/PrimaCategoria/GironeE/Classifica'} target="_blank" rel="noreferrer">Fonte Tuttocampo</a>
+      <a className="standingsSource" href={data?.sourceUrl ?? STANDINGS_SOURCE_URL} target="_blank" rel="noreferrer">Fonte Tuttocampo</a>
     </div>
     {data ? <>
       <div className="tableWrap"><table className="leagueStandingsTable">
