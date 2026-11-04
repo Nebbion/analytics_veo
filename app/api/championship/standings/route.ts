@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 const SOURCE_URL = 'https://www.tuttocampo.it/Veneto/PrimaCategoria/GironeE/Classifica';
-const RANKING_URL = 'https://www.tuttocampo.it/Web/Views/Rankings/RankingView.php';
+const WIDGET_URL = 'https://www.tuttocampo.it/WidgetV2/Classifica/PREVIEW?y=2026-27&preview=VE.1.E&brand=1';
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140.0 Safari/537.36';
 
 type Standing = {
@@ -66,7 +66,7 @@ const parseStandings = (html: string): Standing[] => {
 
 export async function GET() {
   try {
-    const pageResponse = await fetch(SOURCE_URL, {
+    const rankingResponse = await fetch(WIDGET_URL, {
       cache: 'no-store',
       headers: {
         'accept-language': 'it-IT,it;q=0.9',
@@ -74,33 +74,7 @@ export async function GET() {
       },
     });
 
-    if (!pageResponse.ok) throw new Error(`Pagina classifica non disponibile (${pageResponse.status})`);
-
-    const pageHtml = await pageResponse.text();
-    const token = pageHtml.match(/var\s+tckk='([^']+)'/)?.[1];
-    const sessionCookie = pageResponse.headers.get('set-cookie')?.match(/PHPSESSID=[^;,]+/)?.[0];
-
-    if (!token || !sessionCookie) throw new Error('Sessione Tuttocampo non disponibile');
-
-    const rankingUrl = new URL(RANKING_URL);
-    rankingUrl.searchParams.set('tckk', token);
-    rankingUrl.searchParams.set('v', '1');
-    rankingUrl.searchParams.set('category_id', 'VE.1.E');
-    rankingUrl.searchParams.set('total', 'true');
-    rankingUrl.searchParams.set('is_ranking_tab', 'true');
-
-    const rankingResponse = await fetch(rankingUrl, {
-      cache: 'no-store',
-      headers: {
-        'accept-language': 'it-IT,it;q=0.9',
-        cookie: sessionCookie,
-        referer: SOURCE_URL,
-        'user-agent': USER_AGENT,
-        'x-requested-with': 'XMLHttpRequest',
-      },
-    });
-
-    if (!rankingResponse.ok) throw new Error(`Dati classifica non disponibili (${rankingResponse.status})`);
+    if (!rankingResponse.ok) throw new Error(`Classifica Tuttocampo non disponibile (${rankingResponse.status})`);
 
     const rows = parseStandings(await rankingResponse.text());
     if (!rows.length) throw new Error('Nessuna riga valida nella classifica');

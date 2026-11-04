@@ -123,7 +123,7 @@ function LeagueStandings() {
 
 function SeasonalRanking({ title, rows }: { title: string; rows: { name: string; value: number }[] }) {
   return <section className="panel tablePanel seasonalRankingPanel">
-    <div className="sectionTitle"><div><span className="eyebrow">STAGIONE · TUTTE LE COMPETIZIONI</span><h2>{title}</h2></div><span>totale</span></div>
+    <div className="sectionTitle"><div><span className="eyebrow">CAMPIONATO</span><h2>{title}</h2></div><span>totale</span></div>
     <div className="rankingList">{rows.length
       ? rows.slice(0, 8).map((row, index) => <div className="rankRow" key={row.name}><span className="rankNo">{index + 1}</span><strong>{row.name}</strong><span>{number(row.value)}</span></div>)
       : <p className="rankEmpty">Nessun dato disponibile.</p>}
@@ -167,7 +167,7 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
     .sort((a, b) => b.redCards - a.redCards || a.name.localeCompare(b.name, 'it'));
   const production = new Map<string, { name: string; goals: number; assists: number }>();
 
-  playerStats.forEach(stat => {
+  playerStats.filter(stat => stat.competition === 'CAMPIONATO').forEach(stat => {
     const key = stat.playerId || stat.playerName;
     if (!key) return;
     const current = production.get(key) ?? { name: stat.playerName || stat.playerId, goals: 0, assists: 0 };
