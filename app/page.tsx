@@ -647,7 +647,7 @@ export default function Home() {
       {data.role === 'STAFF' && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
     </nav>
 
-    {view === 'home' && data.role === 'STAFF' && <ChampionshipDashboard matches={teamMatches} />}
+    {view === 'home' && data.role === 'STAFF' && <ChampionshipDashboard matches={teamMatches} playerStats={teamStats} />}
 
     {view === 'player' && <>
       <section className="hero"><div><p className="eyebrow">PLAYER CENTER</p><h1>{data.role === 'GIOCATORE' ? 'Profilo personale' : 'Dashboard giocatore'}</h1><p>{data.role === 'GIOCATORE' ? 'Le tue statistiche stagionali e tutte le partite della squadra.' : 'Statistiche stagionali e rendimento partita per partita.'}</p></div>{data.role === 'STAFF' && <label className="selector">Giocatore<select value={selected} onChange={e => setSelected(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label>}</section>

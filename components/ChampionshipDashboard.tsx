@@ -15,6 +15,14 @@ type ChampionshipMatch = {
   } | null;
 };
 
+type ChampionshipPlayerStat = {
+  playerId: string;
+  playerName: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  yellowCards: number;
+  redCards: number;
+};
+
 const number = (value: number) => value.toLocaleString('it-IT');
 
 const dateLabel = (date: string) => date
@@ -48,7 +56,7 @@ function Kpi({ label, value, accent = false }: { label: string; value: string | 
   return <div className={`championshipKpi ${accent ? 'accent' : ''}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
-export function ChampionshipDashboard({ matches }: { matches: ChampionshipMatch[] }) {
+export function ChampionshipDashboard({ matches, playerStats }: { matches: ChampionshipMatch[]; playerStats: ChampionshipPlayerStat[] }) {
   const championshipMatches = matches
     .filter(match => match.competition === 'CAMPIONATO' && match.outcome !== null)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -63,6 +71,25 @@ export function ChampionshipDashboard({ matches }: { matches: ChampionshipMatch[
   const points = wins * 3 + draws;
   const recentMatches = championshipMatches.slice(-5);
   const latestMatch = championshipMatches.at(-1);
+  const discipline = new Map<string, { name: string; yellowCards: number; redCards: number }>();
+
+  playerStats
+    .filter(stat => stat.competition === 'CAMPIONATO')
+    .forEach(stat => {
+      const key = stat.playerId || stat.playerName;
+      if (!key) return;
+      const current = discipline.get(key) ?? { name: stat.playerName || stat.playerId, yellowCards: 0, redCards: 0 };
+      current.yellowCards += stat.yellowCards;
+      current.redCards += stat.redCards;
+      discipline.set(key, current);
+    });
+
+  const bookedPlayers = [...discipline.values()]
+    .filter(player => player.yellowCards > 0)
+    .sort((a, b) => b.yellowCards - a.yellowCards || a.name.localeCompare(b.name, 'it'));
+  const sentOffPlayers = [...discipline.values()]
+    .filter(player => player.redCards > 0)
+    .sort((a, b) => b.redCards - a.redCards || a.name.localeCompare(b.name, 'it'));
 
   return <>
     <section className="hero championshipHero">
@@ -103,6 +130,26 @@ export function ChampionshipDashboard({ matches }: { matches: ChampionshipMatch[
           <div className="latestResult"><span className={`resultBadge result${latestMatch.outcome}`}>{latestMatch.outcome}</span><strong>{latestMatch.result}</strong></div>
           <a className="reportTableLink" href={`/matches/${encodeURIComponent(latestMatch.matchId)}`}>Apri report</a>
         </> : <p className="rankEmpty">Il riepilogo apparirà quando sarà disponibile un risultato.</p>}
+      </section>
+    </div>
+
+    <div className="homeDisciplineGrid">
+      <section className="panel tablePanel homeDisciplinePanel">
+        <div className="sectionTitle"><div><span className="eyebrow">DISCIPLINA</span><h2>Ammoniti</h2></div><span>{yellowCards} cartellini</span></div>
+        <div className="homeDisciplineList">
+          {bookedPlayers.length ? bookedPlayers.map((player, index) => <div className="homeDisciplineRow" key={player.name}>
+            <span className="rankNo">{index + 1}</span><strong>{player.name}</strong><span className="disciplineCount yellowCount">{player.yellowCards}</span>
+          </div>) : <p className="rankEmpty">Nessuna ammonizione in campionato.</p>}
+        </div>
+      </section>
+
+      <section className="panel tablePanel homeDisciplinePanel">
+        <div className="sectionTitle"><div><span className="eyebrow">DISCIPLINA</span><h2>Espulsi</h2></div><span>{redCards} cartellini</span></div>
+        <div className="homeDisciplineList">
+          {sentOffPlayers.length ? sentOffPlayers.map((player, index) => <div className="homeDisciplineRow" key={player.name}>
+            <span className="rankNo">{index + 1}</span><strong>{player.name}</strong><span className="disciplineCount redCount">{player.redCards}</span>
+          </div>) : <p className="rankEmpty">Nessuna espulsione in campionato.</p>}
+        </div>
       </section>
     </div>
   </>;
