@@ -24,6 +24,7 @@ function onOpen() {
     .addItem("🗑️ Rimuovi partita", "rimuoviPartita")
     .addSeparator()
     .addItem("📄 Importa report YouCoach", "importaReportYouCoach")
+    .addItem("♻️ Reimporta partita YouCoach", "reimportaPartitaYouCoach")
     .addSeparator()
     .addItem("🚀 Aggiorna solo nuovi dati", "aggiornaSoloNuoviDati")
     .addItem("🔄 Sincronizza Supabase", "sincronizzaSupabaseIncrementale")
@@ -5498,6 +5499,76 @@ function supabaseDelete_(
   }
 }
 function importaReportYouCoach() {
+  return importaReportYouCoachInterno_('');
+}
+
+
+function reimportaPartitaYouCoach() {
+
+  const ui = SpreadsheetApp.getUi();
+
+  const risposta = ui.prompt(
+    'Reimporta partita YouCoach',
+    'Inserisci il Match_ID della partita da aggiornare. Verrà usato il report MHTML più recente presente nella cartella YouCoach.',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (risposta.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+
+  const matchId = String(
+    risposta.getResponseText() || ''
+  ).trim();
+
+  if (!matchId) {
+    ui.alert('Match_ID non inserito.');
+    return;
+  }
+
+  const conferma = ui.alert(
+    'Conferma reimportazione',
+    'La partita ' + matchId + ' verrà sostituita con i dati del report YouCoach più recente. Al termine saranno ricalcolate le analisi e aggiornato Supabase.',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (conferma !== ui.Button.YES) {
+    return;
+  }
+
+  const risultato =
+    importaReportYouCoachInterno_(matchId);
+
+  if (!risultato || risultato.importate !== 1) {
+    throw new Error(
+      'Reimportazione non completata per il Match_ID ' +
+      matchId +
+      '.'
+    );
+  }
+
+  creaAnalisiPartite();
+  creaAnalisiGiocatori();
+
+  // Il sync completo sostituisce anche le statistiche già presenti,
+  // mentre quello incrementale inserisce soltanto le chiavi mancanti.
+  sincronizzaSupabase();
+
+  SpreadsheetApp.getActive().toast(
+    'Partita aggiornata, analisi ricalcolate e Supabase sincronizzato: ' +
+    matchId,
+    'YouCoach',
+    8
+  );
+
+}
+
+
+function importaReportYouCoachInterno_(matchIdForzato) {
+
+  const forceMatchId = String(
+    matchIdForzato || ''
+  ).trim();
 
   const ss = SpreadsheetApp.getActive();
 
@@ -5542,12 +5613,38 @@ function importaReportYouCoach() {
   const folder =
     DriveApp.getFolderById(folderId);
 
-  const files =
+  const filesIterator =
     folder.getFiles();
+
+  const files = [];
+
+  while (filesIterator.hasNext()) {
+    const file = filesIterator.next();
+
+    if (
+      file
+        .getName()
+        .toLowerCase()
+        .endsWith('.mhtml')
+    ) {
+      files.push(file);
+    }
+  }
+
+  // In presenza di più esportazioni della stessa partita,
+  // il report aggiornato deve avere sempre la precedenza.
+  files.sort(
+    (a, b) =>
+      b.getLastUpdated().getTime() -
+      a.getLastUpdated().getTime()
+  );
 
 
   let importate = 0;
   let saltate = 0;
+  let targetTrovato = false;
+
+  const matchProcessati = new Set();
 
   const matchStatsEsistenti =
     leggiValoriUniciColonna_(
@@ -5564,20 +5661,13 @@ function importaReportYouCoach() {
     );
 
 
-  while (files.hasNext()) {
+  for (
+    let fileIndex = 0;
+    fileIndex < files.length;
+    fileIndex++
+  ) {
 
-    const file =
-      files.next();
-
-
-    if (
-      !file
-        .getName()
-        .toLowerCase()
-        .endsWith('.mhtml')
-    ) {
-      continue;
-    }
+    const file = files[fileIndex];
 
 
     Logger.log('');
@@ -5707,6 +5797,46 @@ function importaReportYouCoach() {
 
 
       // ==========================================
+      // REIMPORT MIRATO E REPORT DUPLICATI
+      // ==========================================
+
+      if (
+        forceMatchId &&
+        matchId !== forceMatchId
+      ) {
+        continue;
+      }
+
+
+      if (matchProcessati.has(matchId)) {
+
+        Logger.log(
+          '⏭️ Report meno recente ignorato: ' +
+          file.getName() +
+          ' | ' +
+          matchId
+        );
+
+        continue;
+
+      }
+
+
+      matchProcessati.add(matchId);
+
+      if (forceMatchId) {
+        targetTrovato = true;
+
+        Logger.log(
+          '♻️ Reimportazione forzata dal file più recente: ' +
+          file.getName() +
+          ' | ' +
+          matchId
+        );
+      }
+
+
+      // ==========================================
       // GIÀ COMPLETAMENTE IMPORTATA → SALTA
       //
       // YOUCOACH_SUBSTITUTIONS può essere vuoto per
@@ -5715,6 +5845,7 @@ function importaReportYouCoach() {
       // ==========================================
 
       if (
+        !forceMatchId &&
         matchStatsEsistenti.has(matchId) &&
         matchLineupsEsistenti.has(matchId)
       ) {
@@ -6175,6 +6306,10 @@ function importaReportYouCoach() {
       matchStatsEsistenti.add(matchId);
       matchLineupsEsistenti.add(matchId);
 
+      if (forceMatchId) {
+        break;
+      }
+
 
     } catch (e) {
 
@@ -6185,21 +6320,42 @@ function importaReportYouCoach() {
         e.message
       );
 
+      if (forceMatchId && targetTrovato) {
+        throw e;
+      }
+
     }
 
+  }
+
+
+  if (forceMatchId && !targetTrovato) {
+    throw new Error(
+      'Nessun report MHTML trovato per il Match_ID ' +
+      forceMatchId +
+      '. Controlla che il file aggiornato sia nella cartella configurata in YOUCOACH_FOLDER_ID.'
+    );
   }
 
 
   SpreadsheetApp
     .getActive()
     .toast(
-      'Nuove YouCoach: ' +
-      importate +
-      ' | già presenti: ' +
-      saltate,
+      forceMatchId
+        ? 'Reimportata partita YouCoach: ' + forceMatchId
+        : 'Nuove YouCoach: ' +
+          importate +
+          ' | già presenti: ' +
+          saltate,
       'YouCoach',
       5
     );
+
+  return {
+    importate: importate,
+    saltate: saltate,
+    matchId: forceMatchId || null
+  };
 
 }
 
