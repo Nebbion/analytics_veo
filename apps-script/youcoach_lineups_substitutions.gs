@@ -26,7 +26,7 @@ var YOUCOACH_SUBSTITUTIONS_HEADERS = [
 ];
 var YOUCOACH_EVENTS_HEADERS = [
   'Match_ID', 'Event_Type', 'Minuto', 'Recupero', 'Player_ID', 'Giocatore',
-  'Related_Player_ID', 'Giocatore_Related', 'Fonte'
+  'Related_Player_ID', 'Giocatore_Related', 'Fonte', 'Tipo_Gol'
 ];
 
 function youCoachOfficialEventType_(value) {
@@ -36,6 +36,24 @@ function youCoachOfficialEventType_(value) {
   if (type === 'YELLOW_CARD' || type === 'AMMONIZIONE') return 'YELLOW_CARD';
   if (type === 'RED_CARD' || type === 'ESPULSIONE') return 'RED_CARD';
   return '';
+}
+
+function youCoachGoalType_(event) {
+  if (!event) return '';
+  var explicitType = youCoachNormalize_(
+    event.tipoGol || event.tipo_gol || event.goal_type || ''
+  ).replace(/[ -]+/g, '_');
+  if (explicitType === 'RIGORE' || explicitType === 'PENALTY') return 'RIGORE';
+  if (explicitType === 'PUNIZIONE' || explicitType === 'FREE_KICK' || explicitType === 'FREEKICK') return 'PUNIZIONE';
+
+  var asPenalty = event.as_penalty === true || event.as_penalty === 1 ||
+    String(event.as_penalty).toLowerCase() === 'true' || String(event.as_penalty) === '1';
+  if (asPenalty) return 'RIGORE';
+
+  var fromFreeKick = event.directly_from_freekick === true || event.directly_from_freekick === 1 ||
+    String(event.directly_from_freekick).toLowerCase() === 'true' ||
+    String(event.directly_from_freekick) === '1';
+  return fromFreeKick ? 'PUNIZIONE' : '';
 }
 
 function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
@@ -113,10 +131,11 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
     var relatedPlayerId = relatedPlayerName
       ? youCoachPlayerId_(null, relatedPlayerName, playerIdByName)
       : '';
+    var goalType = eventType === 'GOAL' ? youCoachGoalType_(event) : '';
     var minute = youCoachNullableInteger_(event.minuto);
     if (!playerId || minute === '') return;
 
-    var key = [matchId, eventType, minute, playerId, relatedPlayerId].join('|');
+    var key = [matchId, eventType, minute, playerId, relatedPlayerId, goalType].join('|');
     if (seenOfficialEvents[key]) return;
     seenOfficialEvents[key] = true;
 
@@ -129,7 +148,8 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
       playerName,
       relatedPlayerId,
       relatedPlayerName,
-      'YOUCOACH'
+      'YOUCOACH',
+      goalType
     ]);
   });
 
@@ -192,7 +212,8 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_() {
           player_name: youCoachText_(row.Giocatore),
           related_player_id: youCoachText_(row.Related_Player_ID) || null,
           related_player_name: youCoachText_(row.Giocatore_Related) || null,
-          fonte: youCoachText_(row.Fonte) || 'YOUCOACH'
+          fonte: youCoachText_(row.Fonte) || 'YOUCOACH',
+          goal_type: youCoachText_(row.Tipo_Gol) || null
         };
       });
 

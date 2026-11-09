@@ -4559,7 +4559,8 @@ function sincronizzaSupabaseIncrementale() {
         player_name: String(row.Giocatore || '').trim(),
         related_player_id: String(row.Related_Player_ID || '').trim() || null,
         related_player_name: String(row.Giocatore_Related || '').trim() || null,
-        fonte: String(row.Fonte || 'YOUCOACH').trim()
+        fonte: String(row.Fonte || 'YOUCOACH').trim(),
+        goal_type: String(row.Tipo_Gol || '').trim() || null
       }));
 
     const remoteOfficialEvents = supabaseGet_(
@@ -6839,6 +6840,9 @@ function parseYouCoachMhtml_(html) {
         tipo:
           e.event_type || '',
 
+        tipoGol:
+          youCoachGoalType_(e),
+
         minuto:
           e.minutes !== undefined &&
           e.minutes !== null &&
@@ -6987,7 +6991,8 @@ var YOUCOACH_EVENTS_HEADERS = [
   'Giocatore',
   'Related_Player_ID',
   'Giocatore_Related',
-  'Fonte'
+  'Fonte',
+  'Tipo_Gol'
 ];
 
 
@@ -7004,6 +7009,46 @@ function youCoachOfficialEventType_(value) {
   if (type === 'YELLOW_CARD' || type === 'AMMONIZIONE') return 'YELLOW_CARD';
   if (type === 'RED_CARD' || type === 'ESPULSIONE') return 'RED_CARD';
   return '';
+}
+
+
+function youCoachGoalType_(event) {
+  if (!event) return '';
+
+  const explicitType = String(
+    event.tipoGol ||
+    event.tipo_gol ||
+    event.goal_type ||
+    ''
+  ).trim().toUpperCase();
+
+  if (explicitType === 'RIGORE' || explicitType === 'PENALTY') {
+    return 'RIGORE';
+  }
+
+  if (
+    explicitType === 'PUNIZIONE' ||
+    explicitType === 'FREE_KICK' ||
+    explicitType === 'FREEKICK'
+  ) {
+    return 'PUNIZIONE';
+  }
+
+  const asPenalty =
+    event.as_penalty === true ||
+    event.as_penalty === 1 ||
+    String(event.as_penalty).toLowerCase() === 'true' ||
+    String(event.as_penalty) === '1';
+
+  if (asPenalty) return 'RIGORE';
+
+  const fromFreeKick =
+    event.directly_from_freekick === true ||
+    event.directly_from_freekick === 1 ||
+    String(event.directly_from_freekick).toLowerCase() === 'true' ||
+    String(event.directly_from_freekick) === '1';
+
+  return fromFreeKick ? 'PUNIZIONE' : '';
 }
 
 
@@ -7263,6 +7308,11 @@ function salvaYouCoachLineupsESostituzioni_(
         ? youCoachText_(evento.giocatore2)
         : '';
 
+    const goalType =
+      eventType === 'GOAL'
+        ? youCoachGoalType_(evento)
+        : '';
+
     const playerKey =
       normalizzaNomeYouCoach_(playerName);
 
@@ -7313,7 +7363,8 @@ function salvaYouCoachLineupsESostituzioni_(
       eventType,
       minuto,
       playerId,
-      relatedPlayerId
+      relatedPlayerId,
+      goalType
     ].join('|');
 
     if (seenOfficialEvents.has(uniqueKey)) {
@@ -7332,7 +7383,8 @@ function salvaYouCoachLineupsESostituzioni_(
       player ? player.nome : playerName,
       relatedPlayerId,
       relatedPlayer ? relatedPlayer.nome : relatedPlayerName,
-      'YOUCOACH'
+      'YOUCOACH',
+      goalType
     ]);
 
   });
@@ -7563,7 +7615,9 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
             String(row.Related_Player_ID || '').trim() || null,
           related_player_name:
             String(row.Giocatore_Related || '').trim() || null,
-          fonte: String(row.Fonte || 'YOUCOACH').trim()
+          fonte: String(row.Fonte || 'YOUCOACH').trim(),
+          goal_type:
+            String(row.Tipo_Gol || '').trim() || null
         }))
         .filter(row =>
           row.event_type &&

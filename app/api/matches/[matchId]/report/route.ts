@@ -33,6 +33,7 @@ type SubstitutionRow = {
 type OfficialEventRow = {
   match_id: string;
   event_type: string;
+  goal_type: string | null;
   minuto: number;
   recupero: boolean;
   player_id: string;
@@ -181,6 +182,7 @@ const buildOfficialEvents = (players: MatchReportPlayer[]) => {
     if (!value || value <= 0) return;
     events.push({
       type,
+      goalType: null,
       label,
       playerName: player.name,
       playerId: player.playerId,
@@ -221,8 +223,16 @@ const buildDetailedOfficialEvents = (
 
     if (!type) return null;
 
+    const goalType = row.goal_type === 'RIGORE' || row.goal_type === 'PUNIZIONE'
+      ? row.goal_type
+      : null;
+
     const label = eventType === 'GOAL'
-      ? 'Gol'
+      ? goalType === 'RIGORE'
+        ? 'Gol su rigore'
+        : goalType === 'PUNIZIONE'
+          ? 'Gol su punizione'
+          : 'Gol'
       : eventType === 'YELLOW_CARD'
         ? 'Ammonizione'
         : eventType === 'SECOND_YELLOW_CARD'
@@ -231,6 +241,7 @@ const buildDetailedOfficialEvents = (
 
     return {
       type,
+      goalType,
       label,
       playerName: playerNameMap.get(row.player_id) || row.player_name || row.player_id,
       playerId: row.player_id,
@@ -323,7 +334,7 @@ export async function GET(
     supabase.from('veo_event_positions').select('*').eq('match_id', matchId),
     supabase.from('match_lineups').select('match_id,player_id,numero,titolare,ordine').eq('match_id', matchId),
     supabase.from('match_substitutions').select('match_id,minuto,recupero,player_out_id,player_in_id').eq('match_id', matchId),
-    supabase.from('match_events').select('match_id,event_type,minuto,recupero,player_id,player_name,related_player_id,related_player_name').eq('match_id', matchId),
+    supabase.from('match_events').select('match_id,event_type,goal_type,minuto,recupero,player_id,player_name,related_player_id,related_player_name').eq('match_id', matchId),
   ]);
 
   if (matchResult.error) {
