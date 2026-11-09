@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ChampionshipCalendar } from './ChampionshipCalendar';
 
 type ChampionshipMatch = {
   matchId: string;
@@ -211,6 +212,8 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
         <Kpi label="Media punti" value={championshipMatches.length ? (points / championshipMatches.length).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'} />
       </div>
     </section>
+
+    <ChampionshipCalendar matches={matches} />
 
     <div className="homeProductionGrid">
       <SeasonalRanking title="Classifica gol" rows={goalsRanking} />
