@@ -36,7 +36,7 @@ type OfficialEventRow = {
   goal_type: string | null;
   minuto: number;
   recupero: boolean;
-  player_id: string;
+  player_id: string | null;
   player_name: string;
   related_player_id: string | null;
   related_player_name: string | null;
@@ -215,6 +215,8 @@ const buildDetailedOfficialEvents = (
     const eventType = row.event_type.toUpperCase();
     const type = eventType === 'GOAL'
       ? 'goal'
+      : eventType === 'OPPONENT_GOAL'
+        ? 'concededGoal'
       : eventType === 'YELLOW_CARD'
         ? 'yellowCard'
         : eventType === 'RED_CARD' || eventType === 'SECOND_YELLOW_CARD'
@@ -233,6 +235,8 @@ const buildDetailedOfficialEvents = (
         : goalType === 'PUNIZIONE'
           ? 'Gol su punizione'
           : 'Gol'
+      : eventType === 'OPPONENT_GOAL'
+        ? 'Gol subito'
       : eventType === 'YELLOW_CARD'
         ? 'Ammonizione'
         : eventType === 'SECOND_YELLOW_CARD'
@@ -243,9 +247,13 @@ const buildDetailedOfficialEvents = (
       type,
       goalType,
       label,
-      playerName: playerNameMap.get(row.player_id) || row.player_name || row.player_id,
-      playerId: row.player_id,
-      jerseyNumber: jerseyByPlayerId.get(row.player_id) ?? null,
+      playerName: eventType === 'OPPONENT_GOAL'
+        ? row.player_name && !/^sconosciuto$/i.test(row.player_name)
+          ? row.player_name
+          : 'Avversario'
+        : (row.player_id ? playerNameMap.get(row.player_id) : null) || row.player_name || row.player_id || '',
+      playerId: row.player_id || '',
+      jerseyNumber: row.player_id ? jerseyByPlayerId.get(row.player_id) ?? null : null,
       minute: row.minuto,
       injuryTime: row.recupero,
       relatedPlayerId: row.related_player_id,
@@ -379,7 +387,7 @@ export async function GET(
   const officialEventRows = (officialEventsResult.data ?? []) as OfficialEventRow[];
   const goalTypesByPlayerId = new Map<string, { penaltyGoals: number; freeKickGoals: number }>();
   officialEventRows.forEach(row => {
-    if (row.event_type !== 'GOAL') return;
+    if (row.event_type !== 'GOAL' || !row.player_id) return;
     const current = goalTypesByPlayerId.get(row.player_id) ?? { penaltyGoals: 0, freeKickGoals: 0 };
     if (row.goal_type === 'RIGORE') current.penaltyGoals += 1;
     if (row.goal_type === 'PUNIZIONE') current.freeKickGoals += 1;
@@ -557,7 +565,7 @@ export async function GET(
       lineup.length ? 'Formazione e panchina da match_lineups (YouCoach).' : 'Nessuna formazione YouCoach disponibile per questa partita.',
       substitutions.length ? 'Sostituzioni da match_substitutions (YouCoach).' : 'Nessuna sostituzione YouCoach disponibile per questa partita.',
       detailedOfficialEvents.length
-        ? 'Gol, assist associati e cartellini con minuto da match_events (YouCoach).'
+        ? 'Gol fatti e subiti, assist associati e cartellini con minuto da match_events (YouCoach).'
         : officialEventsResult.error
           ? 'Eventi ufficiali dettagliati non ancora disponibili; vengono mostrati i totali della partita.'
           : 'Nessun evento ufficiale dettagliato disponibile; vengono mostrati i totali della partita.',

@@ -2,6 +2,7 @@ import type { MatchReportEvent } from '../../lib/match-report/types';
 
 const eventClass = {
   goal: 'goal',
+  concededGoal: 'concededGoal',
   assist: 'assist',
   yellowCard: 'yellow',
   redCard: 'red',

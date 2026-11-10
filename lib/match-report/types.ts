@@ -69,7 +69,7 @@ export type ZoneDistribution = {
 };
 
 export type MatchReportEvent = {
-  type: 'goal' | 'assist' | 'yellowCard' | 'redCard';
+  type: 'goal' | 'concededGoal' | 'assist' | 'yellowCard' | 'redCard';
   goalType: 'RIGORE' | 'PUNIZIONE' | null;
   label: string;
   playerName: string;

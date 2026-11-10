@@ -32,6 +32,7 @@ var YOUCOACH_EVENTS_HEADERS = [
 function youCoachOfficialEventType_(value) {
   var type = youCoachNormalize_(value).replace(/[ -]+/g, '_');
   if (type === 'GOAL' || type === 'GOL') return 'GOAL';
+  if (type === 'OPPONENT_GOAL' || type === 'GOL_SUBITO') return 'OPPONENT_GOAL';
   if (type === 'SECOND_YELLOW_CARD' || type === 'SECONDA_AMMONIZIONE') return 'SECOND_YELLOW_CARD';
   if (type === 'YELLOW_CARD' || type === 'AMMONIZIONE') return 'YELLOW_CARD';
   if (type === 'RED_CARD' || type === 'ESPULSIONE') return 'RED_CARD';
@@ -123,17 +124,25 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
   var seenOfficialEvents = {};
   events.forEach(function(event) {
     var eventType = youCoachOfficialEventType_(event && event.tipo);
+    var isOpponentGoal = eventType === 'GOAL' && (
+      event.avversario === true || event.avversario === 1 ||
+      String(event.avversario).toLowerCase() === 'true' ||
+      String(event.avversario) === '1'
+    );
+    if (isOpponentGoal) eventType = 'OPPONENT_GOAL';
     if (!eventType) return;
 
     var playerName = youCoachText_(event.giocatore);
     var relatedPlayerName = eventType === 'GOAL' ? youCoachText_(event.giocatore2) : '';
-    var playerId = youCoachPlayerId_(null, playerName, playerIdByName);
+    var playerId = eventType === 'OPPONENT_GOAL'
+      ? ''
+      : youCoachPlayerId_(null, playerName, playerIdByName);
     var relatedPlayerId = relatedPlayerName
       ? youCoachPlayerId_(null, relatedPlayerName, playerIdByName)
       : '';
     var goalType = eventType === 'GOAL' ? youCoachGoalType_(event) : '';
     var minute = youCoachNullableInteger_(event.minuto);
-    if (!playerId || minute === '') return;
+    if ((eventType !== 'OPPONENT_GOAL' && !playerId) || minute === '') return;
 
     var key = [matchId, eventType, minute, playerId, relatedPlayerId, goalType].join('|');
     if (seenOfficialEvents[key]) return;
@@ -145,7 +154,7 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
       minute,
       event.recupero === true || String(event.recupero).toLowerCase() === 'true',
       playerId,
-      playerName,
+      eventType === 'OPPONENT_GOAL' ? (playerName || 'Avversario') : playerName,
       relatedPlayerId,
       relatedPlayerName,
       'YOUCOACH',
@@ -181,7 +190,7 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_() {
       .map(function(row) {
         return {
           match_id: matchId,
-          player_id: String(row.Player_ID),
+          player_id: youCoachText_(row.Player_ID) || null,
           numero: youCoachNullForSupabase_(row.Numero),
           titolare: row.Titolare === true || String(row.Titolare).toLowerCase() === 'true',
           ordine: youCoachNullForSupabase_(row.Ordine)

@@ -4550,13 +4550,17 @@ function sincronizzaSupabaseIncrementale() {
 
   if (officialEventsSheet) {
     const localOfficialEvents = sheetToObjects(officialEventsSheet)
-      .filter(row => row.Match_ID && row.Event_Type && row.Player_ID)
+      .filter(row =>
+        row.Match_ID &&
+        row.Event_Type &&
+        (row.Player_ID || String(row.Event_Type).trim() === 'OPPONENT_GOAL')
+      )
       .map(row => ({
         match_id: String(row.Match_ID).trim(),
         event_type: String(row.Event_Type).trim(),
         minuto: Number(row.Minuto || 0),
         recupero: row.Recupero === true || String(row.Recupero).toLowerCase() === 'true',
-        player_id: String(row.Player_ID).trim(),
+        player_id: String(row.Player_ID || '').trim() || null,
         player_name: String(row.Giocatore || '').trim(),
         related_player_id: String(row.Related_Player_ID || '').trim() || null,
         related_player_name: String(row.Giocatore_Related || '').trim() || null,
@@ -4610,6 +4614,9 @@ function sincronizzaSupabaseIncrementale() {
     }
 
     eventiUfficialiDaAggiornare.forEach(row => {
+      const playerFilter = row.player_id
+        ? 'player_id=eq.' + encodeURIComponent(row.player_id)
+        : 'player_id=is.null';
       const relatedPlayerFilter = row.related_player_id
         ? 'related_player_id=eq.' + encodeURIComponent(row.related_player_id)
         : 'related_player_id=is.null';
@@ -4618,7 +4625,7 @@ function sincronizzaSupabaseIncrementale() {
         'match_id=eq.' + encodeURIComponent(row.match_id),
         'event_type=eq.' + encodeURIComponent(row.event_type),
         'minuto=eq.' + encodeURIComponent(row.minuto),
-        'player_id=eq.' + encodeURIComponent(row.player_id),
+        playerFilter,
         relatedPlayerFilter
       ].join('&');
 
@@ -5602,13 +5609,13 @@ function verificaEventiUfficialiSupabase_(matchId) {
         .filter(row =>
           String(row.Match_ID || '').trim() === targetMatchId &&
           row.Event_Type &&
-          row.Player_ID
+          (row.Player_ID || String(row.Event_Type).trim() === 'OPPONENT_GOAL')
         )
         .map(row => ({
           match_id: targetMatchId,
           event_type: String(row.Event_Type || '').trim(),
           minuto: Number(row.Minuto || 0),
-          player_id: String(row.Player_ID || '').trim(),
+          player_id: String(row.Player_ID || '').trim() || null,
           related_player_id:
             String(row.Related_Player_ID || '').trim() || null,
           goal_type: String(row.Tipo_Gol || '').trim() || null
@@ -5670,6 +5677,9 @@ function verificaEventiUfficialiSupabase_(matchId) {
   return {
     events: localEvents.length,
     goals: goals.length,
+    concededGoals: localEvents.filter(
+      row => row.event_type === 'OPPONENT_GOAL'
+    ).length,
     penaltyGoals: goals.filter(row => row.goal_type === 'RIGORE').length,
     freeKickGoals: goals.filter(row => row.goal_type === 'PUNIZIONE').length
   };
@@ -5750,6 +5760,7 @@ function reimportaPartitaYouCoach() {
     'Partita aggiornata, analisi ricalcolate e Supabase sincronizzato: ' +
     matchId +
     ' | gol=' + verifica.goals +
+    ', subiti=' + verifica.concededGoals +
     ', rigori=' + verifica.penaltyGoals +
     ', punizioni=' + verifica.freeKickGoals,
     'YouCoach',
@@ -7022,13 +7033,6 @@ function parseYouCoachMhtml_(html) {
         );
 
 
-      // Escludiamo gli eventi della squadra avversaria
-
-      if (e.opponent === true) {
-        continue;
-      }
-
-
       risultato.eventi.push({
 
         tipo:
@@ -7036,6 +7040,12 @@ function parseYouCoachMhtml_(html) {
 
         tipoGol:
           youCoachGoalType_(e),
+
+        avversario:
+          e.opponent === true ||
+          e.opponent === 1 ||
+          String(e.opponent).toLowerCase() === 'true' ||
+          String(e.opponent) === '1',
 
         minuto:
           e.minutes !== undefined &&
@@ -7197,6 +7207,9 @@ function youCoachOfficialEventType_(value) {
     .replace(/[ -]+/g, '_');
 
   if (type === 'GOAL' || type === 'GOL') return 'GOAL';
+  if (type === 'OPPONENT_GOAL' || type === 'GOL_SUBITO') {
+    return 'OPPONENT_GOAL';
+  }
   if (type === 'SECOND_YELLOW_CARD' || type === 'SECONDA_AMMONIZIONE') {
     return 'SECOND_YELLOW_CARD';
   }
@@ -7485,10 +7498,23 @@ function salvaYouCoachLineupsESostituzioni_(
 
   eventi.forEach(evento => {
 
-    const eventType =
+    let eventType =
       youCoachOfficialEventType_(
         evento && evento.tipo
       );
+
+    const isOpponentGoal =
+      eventType === 'GOAL' &&
+      (
+        evento.avversario === true ||
+        evento.avversario === 1 ||
+        String(evento.avversario).toLowerCase() === 'true' ||
+        String(evento.avversario) === '1'
+      );
+
+    if (isOpponentGoal) {
+      eventType = 'OPPONENT_GOAL';
+    }
 
     if (!eventType) {
       return;
@@ -7514,6 +7540,7 @@ function salvaYouCoachLineupsESostituzioni_(
       normalizzaNomeYouCoach_(relatedPlayerName);
 
     const player =
+      eventType !== 'OPPONENT_GOAL' &&
       playerMap && playerMap[playerKey]
         ? playerMap[playerKey]
         : null;
@@ -7538,7 +7565,10 @@ function salvaYouCoachLineupsESostituzioni_(
     const minuto =
       youCoachNullableInteger_(evento.minuto);
 
-    if (!playerId || minuto === '') {
+    if (
+      (eventType !== 'OPPONENT_GOAL' && !playerId) ||
+      minuto === ''
+    ) {
       Logger.log(
         '⚠️ YOUCOACH_EVENTS: evento incompleto ignorato | ' +
         matchId +
@@ -7574,7 +7604,9 @@ function salvaYouCoachLineupsESostituzioni_(
       evento.recupero === true ||
         String(evento.recupero).toLowerCase() === 'true',
       playerId,
-      player ? player.nome : playerName,
+      eventType === 'OPPONENT_GOAL'
+        ? (playerName || 'Avversario')
+        : (player ? player.nome : playerName),
       relatedPlayerId,
       relatedPlayer ? relatedPlayer.nome : relatedPlayerName,
       'YOUCOACH',
@@ -7803,7 +7835,8 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
           recupero:
             row.Recupero === true ||
             String(row.Recupero).toLowerCase() === 'true',
-          player_id: String(row.Player_ID || '').trim(),
+          player_id:
+            String(row.Player_ID || '').trim() || null,
           player_name: String(row.Giocatore || '').trim(),
           related_player_id:
             String(row.Related_Player_ID || '').trim() || null,
@@ -7815,7 +7848,7 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
         }))
         .filter(row =>
           row.event_type &&
-          row.player_id
+          (row.player_id || row.event_type === 'OPPONENT_GOAL')
         );
 
 
