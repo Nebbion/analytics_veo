@@ -4053,7 +4053,7 @@ function aggiornaSoloNuoviDati() {
     Logger.log('================================');
 
     // 1. Fonte ufficiale: distinta, minuti, eventi, lineup, cambi
-    importaReportYouCoach();
+    importaReportYouCoachInterno_('');
 
     // 2. Associazione nuova partita -> Veo
     sincronizzaPartiteVeo();
@@ -4545,6 +4545,7 @@ function sincronizzaSupabaseIncrementale() {
   // ==========================================
 
   let nuoviEventiUfficiali = [];
+  let eventiUfficialiDaAggiornare = [];
   const officialEventsSheet = ss.getSheetByName('YOUCOACH_EVENTS');
 
   if (officialEventsSheet) {
@@ -4566,7 +4567,7 @@ function sincronizzaSupabaseIncrementale() {
     const remoteOfficialEvents = supabaseGet_(
       supabaseUrl,
       supabaseKey,
-      'match_events?select=match_id,event_type,minuto,player_id,related_player_id'
+      'match_events?select=match_id,event_type,minuto,player_id,related_player_id,goal_type'
     );
 
     const officialEventKey = row => [
@@ -4577,13 +4578,27 @@ function sincronizzaSupabaseIncrementale() {
       String(row.related_player_id || '').trim()
     ].join('|');
 
-    const remoteOfficialEventKeys = new Set(
-      remoteOfficialEvents.map(officialEventKey)
+    const remoteOfficialEventsByKey = new Map(
+      remoteOfficialEvents.map(row => [
+        officialEventKey(row),
+        row
+      ])
     );
 
     nuoviEventiUfficiali = localOfficialEvents.filter(row =>
-      !remoteOfficialEventKeys.has(officialEventKey(row))
+      !remoteOfficialEventsByKey.has(officialEventKey(row))
     );
+
+    eventiUfficialiDaAggiornare = localOfficialEvents.filter(row => {
+      const remoteRow = remoteOfficialEventsByKey.get(
+        officialEventKey(row)
+      );
+
+      if (!remoteRow) return false;
+
+      return String(remoteRow.goal_type || '').trim() !==
+        String(row.goal_type || '').trim();
+    });
 
     if (nuoviEventiUfficiali.length) {
       supabaseInsert_(
@@ -4593,6 +4608,28 @@ function sincronizzaSupabaseIncrementale() {
         nuoviEventiUfficiali
       );
     }
+
+    eventiUfficialiDaAggiornare.forEach(row => {
+      const relatedPlayerFilter = row.related_player_id
+        ? 'related_player_id=eq.' + encodeURIComponent(row.related_player_id)
+        : 'related_player_id=is.null';
+
+      const filter = [
+        'match_id=eq.' + encodeURIComponent(row.match_id),
+        'event_type=eq.' + encodeURIComponent(row.event_type),
+        'minuto=eq.' + encodeURIComponent(row.minuto),
+        'player_id=eq.' + encodeURIComponent(row.player_id),
+        relatedPlayerFilter
+      ].join('&');
+
+      supabasePatch_(
+        supabaseUrl,
+        supabaseKey,
+        'match_events',
+        filter,
+        { goal_type: row.goal_type }
+      );
+    });
   }
 
   Logger.log('================================');
@@ -4605,6 +4642,7 @@ function sincronizzaSupabaseIncrementale() {
   Logger.log('Nuove lineup: ' + nuoveLineups.length);
   Logger.log('Nuove sostituzioni: ' + nuoveSostituzioni.length);
   Logger.log('Nuovi eventi ufficiali: ' + nuoviEventiUfficiali.length);
+  Logger.log('Eventi ufficiali aggiornati: ' + eventiUfficialiDaAggiornare.length);
   Logger.log('================================');
 
   SpreadsheetApp.getActive().toast(
@@ -4613,7 +4651,8 @@ function sincronizzaSupabaseIncrementale() {
     nuoveStats.length + ' nuove stats, ' +
     nuoveLineups.length + ' lineup, ' +
     nuoveSostituzioni.length + ' cambi, ' +
-    nuoviEventiUfficiali.length + ' eventi ufficiali.',
+    nuoviEventiUfficiali.length + ' eventi ufficiali nuovi, ' +
+    eventiUfficialiDaAggiornare.length + ' aggiornati.',
     '⚽ Villanovese',
     5
   );
@@ -5437,6 +5476,42 @@ function supabaseInsert_(
 
 
 /*************************************************
+ * SUPABASE PATCH
+ *************************************************/
+
+function supabasePatch_(
+  baseUrl,
+  apiKey,
+  table,
+  filter,
+  values
+) {
+  const url =
+    `${baseUrl}/rest/v1/${table}?${filter}`;
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'patch',
+    contentType: 'application/json',
+    headers: {
+      'apikey': apiKey,
+      'Prefer': 'return=minimal'
+    },
+    payload: JSON.stringify(values),
+    muteHttpExceptions: true
+  });
+
+  const code = response.getResponseCode();
+  const body = response.getContentText();
+
+  if (code < 200 || code >= 300) {
+    throw new Error(
+      `Supabase PATCH ${table} fallito (${code}): ${body}`
+    );
+  }
+}
+
+
+/*************************************************
  * SUPABASE GET
  *************************************************/
 
@@ -5499,8 +5574,121 @@ function supabaseDelete_(
     );
   }
 }
+
+
+function verificaEventiUfficialiSupabase_(matchId) {
+  const targetMatchId = String(matchId || '').trim();
+
+  if (!targetMatchId) {
+    throw new Error('Match_ID mancante durante la verifica Supabase.');
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const supabaseUrl = props.getProperty('SUPABASE_URL');
+  const supabaseKey = props.getProperty('SUPABASE_SECRET_KEY');
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(
+      'Mancano SUPABASE_URL o SUPABASE_SECRET_KEY nelle Proprietà script.'
+    );
+  }
+
+  const sheet = SpreadsheetApp
+    .getActive()
+    .getSheetByName(YOUCOACH_EVENTS_SHEET);
+
+  const localEvents = sheet
+    ? sheetToObjects(sheet)
+        .filter(row =>
+          String(row.Match_ID || '').trim() === targetMatchId &&
+          row.Event_Type &&
+          row.Player_ID
+        )
+        .map(row => ({
+          match_id: targetMatchId,
+          event_type: String(row.Event_Type || '').trim(),
+          minuto: Number(row.Minuto || 0),
+          player_id: String(row.Player_ID || '').trim(),
+          related_player_id:
+            String(row.Related_Player_ID || '').trim() || null,
+          goal_type: String(row.Tipo_Gol || '').trim() || null
+        }))
+    : [];
+
+  const remoteEvents = supabaseGet_(
+    supabaseUrl,
+    supabaseKey,
+    'match_events?select=match_id,event_type,minuto,player_id,related_player_id,goal_type' +
+      '&match_id=eq.' + encodeURIComponent(targetMatchId)
+  );
+
+  const eventKey = row => [
+    String(row.match_id || '').trim(),
+    String(row.event_type || '').trim(),
+    String(row.minuto || ''),
+    String(row.player_id || '').trim(),
+    String(row.related_player_id || '').trim()
+  ].join('|');
+
+  const remoteByKey = new Map(
+    remoteEvents.map(row => [eventKey(row), row])
+  );
+
+  const errors = [];
+
+  localEvents.forEach(row => {
+    const remoteRow = remoteByKey.get(eventKey(row));
+
+    if (!remoteRow) {
+      errors.push(
+        row.event_type + ' al ' + row.minuto + "' non presente in Supabase"
+      );
+      return;
+    }
+
+    if (
+      String(remoteRow.goal_type || '').trim() !==
+      String(row.goal_type || '').trim()
+    ) {
+      errors.push(
+        row.event_type + ' al ' + row.minuto +
+        "': Tipo_Gol foglio=" + (row.goal_type || 'vuoto') +
+        ', Supabase=' + (remoteRow.goal_type || 'vuoto')
+      );
+    }
+  });
+
+  if (errors.length) {
+    throw new Error(
+      'Verifica eventi Supabase fallita per ' + targetMatchId + ':\n- ' +
+      errors.join('\n- ')
+    );
+  }
+
+  const goals = localEvents.filter(row => row.event_type === 'GOAL');
+
+  return {
+    events: localEvents.length,
+    goals: goals.length,
+    penaltyGoals: goals.filter(row => row.goal_type === 'RIGORE').length,
+    freeKickGoals: goals.filter(row => row.goal_type === 'PUNIZIONE').length
+  };
+}
+
+
 function importaReportYouCoach() {
-  return importaReportYouCoachInterno_('');
+  const risultato = importaReportYouCoachInterno_('');
+
+  if (risultato && risultato.importate > 0) {
+    creaAnalisiPartite();
+    creaAnalisiGiocatori();
+  }
+
+  // L'azione di menu deve aggiornare anche il sito. In particolare,
+  // il sync incrementale ora corregge Tipo_Gol sugli eventi già esistenti.
+  sincronizzaSupabaseIncrementale();
+
+  return risultato;
 }
 
 
@@ -5555,9 +5743,15 @@ function reimportaPartitaYouCoach() {
   // mentre quello incrementale inserisce soltanto le chiavi mancanti.
   sincronizzaSupabase();
 
+  const verifica =
+    verificaEventiUfficialiSupabase_(matchId);
+
   SpreadsheetApp.getActive().toast(
     'Partita aggiornata, analisi ricalcolate e Supabase sincronizzato: ' +
-    matchId,
+    matchId +
+    ' | gol=' + verifica.goals +
+    ', rigori=' + verifica.penaltyGoals +
+    ', punizioni=' + verifica.freeKickGoals,
     'YouCoach',
     8
   );
