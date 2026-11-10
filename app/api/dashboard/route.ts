@@ -54,6 +54,16 @@ type SubstitutionRow = {
   player_in_id: string;
 };
 
+type OfficialGoalRow = {
+  match_id: string;
+  player_id: string;
+  player_name: string;
+  event_type: string;
+  goal_type: string | null;
+  minuto: number;
+  recupero: boolean;
+};
+
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const optionalNum = (row: Record<string, unknown> | undefined, keys: string[]) => {
   for (const key of keys) {
@@ -432,7 +442,7 @@ export async function GET() {
   // RLS consente agli utenti attivi i dati completi necessari alle viste
   // Squadra, Tattica e Report partita. Qui manteniamo comunque separati
   // il profilo personale del giocatore dai dati aggregati della squadra.
-  const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult, substitutionsResult] = await Promise.all([
+  const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult, substitutionsResult, officialGoalsResult] = await Promise.all([
     supabase
       .from('players')
       .select('player_id,nome')
@@ -453,6 +463,10 @@ export async function GET() {
     supabase
       .from('match_substitutions')
       .select('match_id,player_out_id,player_in_id'),
+    supabase
+      .from('match_events')
+      .select('match_id,player_id,player_name,event_type,goal_type,minuto,recupero')
+      .eq('event_type', 'GOAL'),
   ]);
 
   if (playersResult.error) {
@@ -490,6 +504,25 @@ export async function GET() {
   // La dashboard resta disponibile anche prima dell'esecuzione manuale della migration.
   const allLineups = lineupsResult.error ? [] : (lineupsResult.data ?? []) as LineupRow[];
   const allSubstitutions = substitutionsResult.error ? [] : (substitutionsResult.data ?? []) as SubstitutionRow[];
+  const allOfficialGoals = officialGoalsResult.error ? [] : (officialGoalsResult.data ?? []) as OfficialGoalRow[];
+  const goalTypesByMatchPlayer = new Map<string, { penaltyGoals: number; freeKickGoals: number }>();
+
+  allOfficialGoals.forEach(row => {
+    const key = `${row.match_id}|${row.player_id}`;
+    const current = goalTypesByMatchPlayer.get(key) ?? { penaltyGoals: 0, freeKickGoals: 0 };
+    if (row.goal_type === 'RIGORE') current.penaltyGoals += 1;
+    if (row.goal_type === 'PUNIZIONE') current.freeKickGoals += 1;
+    goalTypesByMatchPlayer.set(key, current);
+  });
+
+  const goalTypesByPlayer = new Map<string, { penaltyGoals: number; freeKickGoals: number }>();
+  goalTypesByMatchPlayer.forEach((counts, key) => {
+    const playerId = key.slice(key.indexOf('|') + 1);
+    const current = goalTypesByPlayer.get(playerId) ?? { penaltyGoals: 0, freeKickGoals: 0 };
+    current.penaltyGoals += counts.penaltyGoals;
+    current.freeKickGoals += counts.freeKickGoals;
+    goalTypesByPlayer.set(playerId, current);
+  });
   const seasonMap = new Map(allSeason.map(row => [row.player_id, row]));
   const matchMetricTotals = new Map<string, { assists: number; yellowCards: number; redCards: number }>();
   const appearanceKeys = new Set<string>();
@@ -522,6 +555,25 @@ export async function GET() {
   const playerNameMap = new Map(
     allPlayers.map(p => [p.player_id, p.nome])
   );
+  const scorersByMatchId = new Map<string, {
+    playerId: string;
+    playerName: string;
+    minute: number;
+    injuryTime: boolean;
+    goalType: 'RIGORE' | 'PUNIZIONE' | null;
+  }[]>();
+
+  allOfficialGoals.forEach(row => {
+    const scorers = scorersByMatchId.get(row.match_id) ?? [];
+    scorers.push({
+      playerId: row.player_id,
+      playerName: playerNameMap.get(row.player_id) || row.player_name || row.player_id,
+      minute: num(row.minuto),
+      injuryTime: row.recupero === true,
+      goalType: row.goal_type === 'RIGORE' || row.goal_type === 'PUNIZIONE' ? row.goal_type : null,
+    });
+    scorersByMatchId.set(row.match_id, scorers);
+  });
 
   const tactics = await fetchTacticalData(
     supabase,
@@ -540,6 +592,7 @@ export async function GET() {
     const matchTotals = matchMetricTotals.get(p.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
     const appearances = [...appearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
     const minutes = num(s?.minuti);
+    const goalTypes = goalTypesByPlayer.get(p.player_id) ?? { penaltyGoals: 0, freeKickGoals: 0 };
 
     return {
       playerId: p.player_id,
@@ -547,6 +600,8 @@ export async function GET() {
       appearances,
       minutes,
       goals: num(s?.gol),
+      penaltyGoals: goalTypes.penaltyGoals,
+      freeKickGoals: goalTypes.freeKickGoals,
       assists: optionalNum(s, assistKeys) || matchTotals.assists,
       yellowCards: optionalNum(s, yellowCardKeys) || matchTotals.yellowCards,
       redCards: optionalNum(s, redCardKeys) || matchTotals.redCards,
@@ -584,6 +639,7 @@ export async function GET() {
   const allMatchStats = allStats.map(s => {
     const match = matchMap.get(s.match_id);
     const minutes = num(s.minuti);
+    const goalTypes = goalTypesByMatchPlayer.get(`${s.match_id}|${s.player_id}`) ?? { penaltyGoals: 0, freeKickGoals: 0 };
 
     return {
       matchId: s.match_id,
@@ -594,6 +650,8 @@ export async function GET() {
       playerName: playerNameMap.get(s.player_id) ?? '',
       minutes,
       goals: num(s.gol),
+      penaltyGoals: goalTypes.penaltyGoals,
+      freeKickGoals: goalTypes.freeKickGoals,
       assists: optionalNum(s, assistKeys),
       yellowCards: optionalNum(s, yellowCardKeys),
       redCards: optionalNum(s, redCardKeys),
@@ -645,6 +703,8 @@ export async function GET() {
     playersUsed: number;
     minutes: number;
     goals: number;
+    penaltyGoals: number;
+    freeKickGoals: number;
     assists: number;
     yellowCards: number;
     redCards: number;
@@ -658,6 +718,8 @@ export async function GET() {
       playersUsed: 0,
       minutes: 0,
       goals: 0,
+      penaltyGoals: 0,
+      freeKickGoals: 0,
       assists: 0,
       yellowCards: 0,
       redCards: 0,
@@ -669,6 +731,8 @@ export async function GET() {
     if (stat.minutes > 0) summary.playersUsed += 1;
     summary.minutes += stat.minutes;
     summary.goals += stat.goals;
+    summary.penaltyGoals += stat.penaltyGoals;
+    summary.freeKickGoals += stat.freeKickGoals;
     summary.assists += stat.assists;
     summary.yellowCards += stat.yellowCards;
     summary.redCards += stat.redCards;
@@ -703,6 +767,7 @@ export async function GET() {
       outcome: score?.outcome ?? null,
       homeAway: rowText(m, ['casa_trasferta', 'home_away', 'venue', 'sede']),
       starters,
+      scorers: (scorersByMatchId.get(m.match_id) ?? []).sort((a, b) => a.minute - b.minute),
       summary: matchSummaryById.get(m.match_id) ?? null,
     };
   });

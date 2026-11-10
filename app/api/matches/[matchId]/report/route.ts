@@ -377,6 +377,14 @@ export async function GET(
   const lineupRows = (lineupResult.data ?? []) as LineupRow[];
   const substitutionRows = (substitutionsResult.data ?? []) as SubstitutionRow[];
   const officialEventRows = (officialEventsResult.data ?? []) as OfficialEventRow[];
+  const goalTypesByPlayerId = new Map<string, { penaltyGoals: number; freeKickGoals: number }>();
+  officialEventRows.forEach(row => {
+    if (row.event_type !== 'GOAL') return;
+    const current = goalTypesByPlayerId.get(row.player_id) ?? { penaltyGoals: 0, freeKickGoals: 0 };
+    if (row.goal_type === 'RIGORE') current.penaltyGoals += 1;
+    if (row.goal_type === 'PUNIZIONE') current.freeKickGoals += 1;
+    goalTypesByPlayerId.set(row.player_id, current);
+  });
 
   const jerseyByPlayerId = new Map<string, number>();
   lineupRows.forEach(row => {
@@ -401,12 +409,15 @@ export async function GET(
   const players = statsRows
     .map((row): MatchReportPlayer => {
       const playerId = playerKey(row);
+      const goalTypes = goalTypesByPlayerId.get(playerId) ?? { penaltyGoals: 0, freeKickGoals: 0 };
       return {
         playerId,
         name: playerName(row) || 'Giocatore',
         jerseyNumber: jerseyByPlayerId.get(playerId) ?? null,
         minutes: rowNumber(row, ['minuti', 'minutes']),
         goals: rowNumber(row, metricKeys.goals),
+        penaltyGoals: goalTypes.penaltyGoals,
+        freeKickGoals: goalTypes.freeKickGoals,
         assists: rowNumber(row, assistKeys),
         yellowCards: rowNumber(row, yellowCardKeys),
         redCards: rowNumber(row, redCardKeys),

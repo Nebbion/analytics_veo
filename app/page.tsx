@@ -5,6 +5,7 @@ import { ChampionshipDashboard } from '../components/ChampionshipDashboard';
 
 type Player = {
   playerId: string; name: string; appearances: number; minutes: number; goals: number; goalsPer90: number;
+  penaltyGoals: number; freeKickGoals: number;
   assists: number; yellowCards: number; redCards: number;
   shots: number; shotsPer90: number; passes: number; completedPasses: number; passSuccess: number;
   distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
@@ -18,7 +19,7 @@ type Match = {
   matchId: string; date: string; match: string; playerId: string; playerName: string; minutes: number;
   competition: 'CAMPIONATO' | 'COPPA';
   assists: number; yellowCards: number; redCards: number;
-  goals: number; goalsPer90: number; shots: number; shotsPer90: number; passes: number; completedPasses: number;
+  goals: number; penaltyGoals: number; freeKickGoals: number; goalsPer90: number; shots: number; shotsPer90: number; passes: number; completedPasses: number;
   passSuccess: number; distanceKm: number; distancePer90: number; sprints: number; sprintsPer90: number;
   highIntensityRuns: number; highIntensityRunsPer90: number; recoveredBalls: number; recoveredBallsPer90: number;
   tackles: number; tacklesPer90: number; fouls: number; foulsPer90: number; maxSpeed: number; averageSpeed: number;
@@ -34,10 +35,13 @@ type TeamMatch = {
   outcome: 'V' | 'N' | 'P' | null;
   homeAway: string;
   starters: { playerId: string; name: string; listNumber: number | null }[];
+  scorers: { playerId: string; playerName: string; minute: number; injuryTime: boolean; goalType: 'RIGORE' | 'PUNIZIONE' | null }[];
   summary: {
     playersUsed: number;
     minutes: number;
     goals: number;
+    penaltyGoals: number;
+    freeKickGoals: number;
     assists: number;
     yellowCards: number;
     redCards: number;
@@ -70,6 +74,8 @@ type PlayerCompetitionStats = {
   appearances: number;
   minutes: number;
   goals: number;
+  penaltyGoals: number;
+  freeKickGoals: number;
   assists: number;
   yellowCards: number;
   redCards: number;
@@ -97,6 +103,19 @@ type TacticalMode = 'average' | 'shot' | 'tackle';
 
 const fmt = (v: unknown, digits = 1) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const int = (v: unknown) => Number(v ?? 0).toLocaleString('it-IT', { maximumFractionDigits: 0 });
+const goalBreakdown = (penaltyGoals: number, freeKickGoals: number) => [
+  penaltyGoals > 0 ? `${int(penaltyGoals)} su rigore` : '',
+  freeKickGoals > 0 ? `${int(freeKickGoals)} su punizione` : '',
+].filter(Boolean).join(', ');
+const goalRankingValue = (goals: number, penaltyGoals: number, freeKickGoals: number) => {
+  const detail = goalBreakdown(penaltyGoals, freeKickGoals);
+  return `${int(goals)} gol${detail ? ` (${detail})` : ''}`;
+};
+const matchGoalValue = (goals: number, penaltyGoals: number, freeKickGoals: number) => {
+  if (goals <= 0) return '—';
+  const detail = goalBreakdown(penaltyGoals, freeKickGoals);
+  return `${int(goals)}${detail ? ` (${detail})` : ''}`;
+};
 const opponentLabel = (match: string) => {
   const fallback = match.trim() || '—';
   const opponent = fallback
@@ -163,10 +182,10 @@ function LineChart({ title, values, unit, color = 'green' }: { title: string; va
   </svg></div>;
 }
 
-function RankTable({ title, rows, metricLabel }: { title: string; rows: { name: string; value: number }[]; metricLabel: string }) {
+function RankTable({ title, rows, metricLabel }: { title: string; rows: { name: string; value: number; displayValue?: string }[]; metricLabel: string }) {
   const visibleRows = rows.slice(0, 8);
   return <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">RANKING</span><h2>{title}</h2></div><span>{metricLabel}</span></div><div className="rankingList">
-    {visibleRows.length ? visibleRows.map((r, i) => <div className="rankRow" key={r.name}><span className="rankNo">{i + 1}</span><strong>{r.name}</strong><span>{fmt(r.value, 2)}</span></div>) : <div className="rankEmpty">Nessun dato disponibile.</div>}
+    {visibleRows.length ? visibleRows.map((r, i) => <div className="rankRow" key={r.name}><span className="rankNo">{i + 1}</span><strong>{r.name}</strong><span>{r.displayValue ?? fmt(r.value, 2)}</span></div>) : <div className="rankEmpty">Nessun dato disponibile.</div>}
   </div></section>;
 }
 
@@ -184,6 +203,8 @@ function PlayerCompetitionPanel({ stats }: { stats: PlayerCompetitionStats }) {
     <Stat label="Minuti" value={int(stats.minutes)} />
     <Stat label="Minuti / gara" value={stats.appearances > 0 ? fmt(stats.minutes / stats.appearances, 1) : '—'} />
     <Stat label="Gol" value={int(stats.goals)} />
+    {stats.penaltyGoals > 0 && <Stat label="Gol su rigore" value={int(stats.penaltyGoals)} />}
+    {stats.freeKickGoals > 0 && <Stat label="Gol su punizione" value={int(stats.freeKickGoals)} />}
     {stats.assists > 0 && <Stat label="Assist" value={int(stats.assists)} />}
     {stats.yellowCards > 0 && <Stat label="Ammonizioni" value={int(stats.yellowCards)} />}
     {stats.redCards > 0 && <Stat label="Espulsioni" value={int(stats.redCards)} />}
@@ -216,6 +237,8 @@ function TeamMatchesSection({ matches }: { matches: TeamMatch[] }) {
           { label: 'Giocatori impiegati', value: match.summary.playersUsed, visible: match.summary.playersUsed > 0 },
           { label: 'Minuti complessivi', value: match.summary.minutes, visible: match.summary.minutes > 0 },
           { label: 'Gol registrati', value: match.summary.goals, visible: match.summary.goals > 0 },
+          { label: 'Gol su rigore', value: match.summary.penaltyGoals, visible: match.summary.penaltyGoals > 0 },
+          { label: 'Gol su punizione', value: match.summary.freeKickGoals, visible: match.summary.freeKickGoals > 0 },
           { label: 'Assist', value: match.summary.assists, visible: match.summary.assists > 0 },
           { label: 'Ammonizioni', value: match.summary.yellowCards, visible: match.summary.yellowCards > 0 },
           { label: 'Espulsioni', value: match.summary.redCards, visible: match.summary.redCards > 0 },
@@ -231,7 +254,7 @@ function TeamMatchesSection({ matches }: { matches: TeamMatch[] }) {
               <span className="teamMatchMeta">{match.competition === 'COPPA' ? 'Coppa' : 'Campionato'} · {dateLabel(match.date)}{match.homeAway ? ` · ${match.homeAway}` : ''}</span>
               <h3>{match.match}</h3>
             </div>
-            <div className="teamMatchResult"><span>Risultato</span><strong>{match.result || '—'}</strong></div>
+            <div className="teamMatchResult"><span>Risultato</span><strong>{match.result || '—'}</strong>{match.scorers.length > 0 && <div className="teamMatchScorers">{match.scorers.map((scorer, index) => <small key={`${scorer.playerId}-${scorer.minute}-${index}`}>{scorer.playerName} {scorer.minute}&apos;{scorer.injuryTime ? ' rec.' : ''}{scorer.goalType === 'RIGORE' ? ' (rigore)' : scorer.goalType === 'PUNIZIONE' ? ' (punizione)' : ''}</small>)}</div>}</div>
           </div>
           <div className="teamLineup">
             <div className="teamLineupTitle"><span>Formazione titolare</span><small>{match.starters.length ? `${match.starters.length} giocatori` : 'dato non disponibile'}</small></div>
@@ -325,6 +348,8 @@ export default function Home() {
       appearances: 0,
       minutes: 0,
       goals: 0,
+      penaltyGoals: 0,
+      freeKickGoals: 0,
       assists: 0,
       yellowCards: 0,
       redCards: 0,
@@ -351,6 +376,8 @@ export default function Home() {
       if (match.minutes > 0) bucket.appearances += 1;
       bucket.minutes += match.minutes;
       bucket.goals += match.goals;
+      bucket.penaltyGoals += match.penaltyGoals;
+      bucket.freeKickGoals += match.freeKickGoals;
       bucket.assists += match.assists;
       bucket.yellowCards += match.yellowCards;
       bucket.redCards += match.redCards;
@@ -372,6 +399,8 @@ export default function Home() {
       appearances: stats.appearances,
       minutes: stats.minutes,
       goals: stats.goals,
+      penaltyGoals: stats.penaltyGoals,
+      freeKickGoals: stats.freeKickGoals,
       assists: stats.assists,
       yellowCards: stats.yellowCards,
       redCards: stats.redCards,
@@ -420,6 +449,8 @@ export default function Home() {
     const totalMinutes = teamPlayers.reduce((s, p) => s + p.minutes, 0);
     const totalAppearances = teamPlayers.reduce((s, p) => s + p.appearances, 0);
     const goals = teamPlayers.reduce((s, p) => s + p.goals, 0);
+    const penaltyGoals = teamPlayers.reduce((s, p) => s + p.penaltyGoals, 0);
+    const freeKickGoals = teamPlayers.reduce((s, p) => s + p.freeKickGoals, 0);
     const assists = teamPlayers.reduce((s, p) => s + p.assists, 0);
     const yellowCards = teamPlayers.reduce((s, p) => s + p.yellowCards, 0);
     const redCards = teamPlayers.reduce((s, p) => s + p.redCards, 0);
@@ -443,6 +474,8 @@ export default function Home() {
       totalAppearances,
       totalMinutes,
       goals,
+      penaltyGoals,
+      freeKickGoals,
       assists,
       yellowCards,
       redCards,
@@ -494,8 +527,8 @@ export default function Home() {
   const competitionRankings = useMemo(() => {
     const playerNameById = new Map(teamPlayers.map(p => [p.playerId, p.name]));
     const buckets = {
-      CAMPIONATO: new Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>(),
-      COPPA: new Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>(),
+      CAMPIONATO: new Map<string, { name: string; goals: number; penaltyGoals: number; freeKickGoals: number; assists: number; yellowCards: number; redCards: number }>(),
+      COPPA: new Map<string, { name: string; goals: number; penaltyGoals: number; freeKickGoals: number; assists: number; yellowCards: number; redCards: number }>(),
     };
 
     teamStats.forEach(m => {
@@ -503,11 +536,15 @@ export default function Home() {
       const current = bucket.get(m.playerId) ?? {
         name: m.playerName || playerNameById.get(m.playerId) || m.playerId,
         goals: 0,
+        penaltyGoals: 0,
+        freeKickGoals: 0,
         assists: 0,
         yellowCards: 0,
         redCards: 0,
       };
       current.goals += m.goals;
+      current.penaltyGoals += m.penaltyGoals;
+      current.freeKickGoals += m.freeKickGoals;
       current.assists += m.assists;
       current.yellowCards += m.yellowCards;
       current.redCards += m.redCards;
@@ -515,14 +552,20 @@ export default function Home() {
     });
 
     const sortedMetricRows = (
-      rows: Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>,
+      rows: Map<string, { name: string; goals: number; penaltyGoals: number; freeKickGoals: number; assists: number; yellowCards: number; redCards: number }>,
       metric: 'goals' | 'assists'
     ) => [...rows.values()]
       .filter(row => row[metric] > 0)
       .sort((a, b) => b[metric] - a[metric] || a.name.localeCompare(b.name, 'it'))
-      .map(row => ({ name: row.name, value: row[metric] }));
+      .map(row => ({
+        name: row.name,
+        value: row[metric],
+        displayValue: metric === 'goals'
+          ? goalRankingValue(row.goals, row.penaltyGoals, row.freeKickGoals)
+          : undefined,
+      }));
 
-    const sortedDisciplineRows = (rows: Map<string, { name: string; goals: number; assists: number; yellowCards: number; redCards: number }>) =>
+    const sortedDisciplineRows = (rows: Map<string, { name: string; goals: number; penaltyGoals: number; freeKickGoals: number; assists: number; yellowCards: number; redCards: number }>) =>
       [...rows.values()].filter(row => row.yellowCards > 0 || row.redCards > 0).sort((a, b) =>
         (b.yellowCards + b.redCards) - (a.yellowCards + a.redCards) ||
         b.redCards - a.redCards ||
@@ -655,6 +698,7 @@ export default function Home() {
         <section className="profile panel"><div><span className="eyebrow">PROFILO</span><h2>{player.name}</h2><p>{player.appearances} presenze · {int(player.minutes)} minuti</p></div><div className="profileHighlight"><span>GOL / 90</span><strong>{fmt(player.goalsPer90, 2)}</strong></div></section>
         <section className="statsGrid">
           <Stat label="Presenze" value={int(player.appearances)} /><Stat label="Minuti" value={int(player.minutes)} /><Stat label="Minuti / presenza" value={fmt(player.minutesPerAppearance, 1)} /><Stat label="Gol" value={int(player.goals)} />
+          {player.penaltyGoals > 0 && <Stat label="Gol su rigore" value={int(player.penaltyGoals)} />}{player.freeKickGoals > 0 && <Stat label="Gol su punizione" value={int(player.freeKickGoals)} />}
           <Stat label="Gol / 90" value={fmt(player.goalsPer90, 2)} />{player.assists > 0 && <Stat label="Assist" value={int(player.assists)} />}{player.yellowCards > 0 && <Stat label="Ammonizioni" value={int(player.yellowCards)} />}{player.redCards > 0 && <Stat label="Espulsioni" value={int(player.redCards)} />}
         </section>
         {hasPlayerTechnicalData(player) && <section className="panel tablePanel advancedStats">
@@ -694,7 +738,7 @@ export default function Home() {
             {player.shots > 0 && <Stat label="Minuti / tiro" value={fmt(player.minutesPerShot, 1)} />}
           </div>
         </section>}
-        {data.role === 'GIOCATORE' ? <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">PARTITE</span><h2>Partite generali</h2></div><span>{generalPlayerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Presenza</th><th>Min</th><th>Gol</th><th>Assist</th><th>Amm.</th><th>Esp.</th><th>Report</th></tr></thead><tbody>{generalPlayerMatches.map((m, i) => { const s = m.stats; return <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{s ? 'Sì' : 'Non impiegato'}</td><td>{s ? int(s.minutes) : '—'}</td><td>{s && s.goals > 0 ? int(s.goals) : '—'}</td><td>{s && s.assists > 0 ? int(s.assists) : '—'}</td><td>{s && s.yellowCards > 0 ? int(s.yellowCards) : '—'}</td><td>{s && s.redCards > 0 ? int(s.redCards) : '—'}</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>; })}</tbody></table></div></section> : <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">MATCH LOG</span><h2>Partite</h2></div><span>{playerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Min</th><th>Gol</th><th>Assist</th><th>Amm.</th><th>Esp.</th><th>Report</th></tr></thead><tbody>{playerMatches.map((m, i) => <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{int(m.minutes)}</td><td>{m.goals > 0 ? int(m.goals) : '—'}</td><td>{m.assists > 0 ? int(m.assists) : '—'}</td><td>{m.yellowCards > 0 ? int(m.yellowCards) : '—'}</td><td>{m.redCards > 0 ? int(m.redCards) : '—'}</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>)}</tbody></table></div></section>}
+        {data.role === 'GIOCATORE' ? <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">PARTITE</span><h2>Partite generali</h2></div><span>{generalPlayerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Presenza</th><th>Min</th><th>Gol</th><th>Assist</th><th>Amm.</th><th>Esp.</th><th>Report</th></tr></thead><tbody>{generalPlayerMatches.map((m, i) => { const s = m.stats; return <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{s ? 'Sì' : 'Non impiegato'}</td><td>{s ? int(s.minutes) : '—'}</td><td>{s ? matchGoalValue(s.goals, s.penaltyGoals, s.freeKickGoals) : '—'}</td><td>{s && s.assists > 0 ? int(s.assists) : '—'}</td><td>{s && s.yellowCards > 0 ? int(s.yellowCards) : '—'}</td><td>{s && s.redCards > 0 ? int(s.redCards) : '—'}</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>; })}</tbody></table></div></section> : <section className="panel tablePanel"><div className="sectionTitle"><div><span className="eyebrow">MATCH LOG</span><h2>Partite</h2></div><span>{playerMatches.length} gare</span></div><div className="tableWrap"><table><thead><tr><th>Data</th><th>Partita</th><th>Min</th><th>Gol</th><th>Assist</th><th>Amm.</th><th>Esp.</th><th>Report</th></tr></thead><tbody>{playerMatches.map((m, i) => <tr key={`${m.matchId}-${i}`}><td>{dateLabel(m.date)}</td><td>{m.match}</td><td>{int(m.minutes)}</td><td>{matchGoalValue(m.goals, m.penaltyGoals, m.freeKickGoals)}</td><td>{m.assists > 0 ? int(m.assists) : '—'}</td><td>{m.yellowCards > 0 ? int(m.yellowCards) : '—'}</td><td>{m.redCards > 0 ? int(m.redCards) : '—'}</td><td><a className="reportTableLink" href={`/matches/${encodeURIComponent(m.matchId)}`}>Apri report</a></td></tr>)}</tbody></table></div></section>}
         <section className="chartsGrid"><LineChart title="Minuti per partita" unit="min" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.minutes }))} /><LineChart title="Gol per partita" unit="gol" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.goals }))} /><LineChart title="Cartellini per partita" unit="cartellini" color="neutral" values={playerMatches.map(m => ({ label: dateLabel(m.date), value: m.yellowCards + m.redCards }))} /></section>
       </>}
     </>}
@@ -703,7 +747,7 @@ export default function Home() {
       <section className="hero"><div><p className="eyebrow">TEAM CENTER</p><h1>Dashboard squadra</h1><p>Fotografia aggiornata della rosa: utilizzo, produzione offensiva e disciplina.</p></div><div className="heroMeta"><span>Partite con dati</span><strong>{team.playedMatches}</strong></div></section>
       <section className="statsGrid">
         <Stat label="Rosa utilizzata" value={`${int(team.usedPlayers)}/${int(team.players)}`} /><Stat label="Presenze totali" value={int(team.totalAppearances)} /><Stat label="Minuti squadra" value={int(team.totalMinutes)} /><Stat label="Minuti / presenza" value={fmt(team.minutesPerAppearance, 1)} />
-        <Stat label="Gol" value={int(team.goals)} /><Stat label="Gol / partita" value={fmt(team.goalsPerMatch, 2)} /><Stat label="Assist" value={int(team.assists)} /><Stat label="Assist / partita" value={fmt(team.assistsPerMatch, 2)} />
+        <Stat label="Gol" value={int(team.goals)} />{team.penaltyGoals > 0 && <Stat label="Gol su rigore" value={int(team.penaltyGoals)} />}{team.freeKickGoals > 0 && <Stat label="Gol su punizione" value={int(team.freeKickGoals)} />}<Stat label="Gol / partita" value={fmt(team.goalsPerMatch, 2)} /><Stat label="Assist" value={int(team.assists)} /><Stat label="Assist / partita" value={fmt(team.assistsPerMatch, 2)} />
         <Stat label="Ammonizioni" value={int(team.yellowCards)} /><Stat label="Espulsioni" value={int(team.redCards)} /><Stat label="Cartellini / partita" value={fmt(team.cardsPerMatch, 2)} /><Stat label="Minuti medi / giocatore" value={fmt(team.minutesPerUsedPlayer, 0)} />
       </section>
       {team.hasVeoData && <section className="panel tablePanel advancedStats">

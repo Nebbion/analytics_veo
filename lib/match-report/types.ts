@@ -22,6 +22,8 @@ export type MatchReportPlayer = {
   jerseyNumber: number | null;
   minutes: number | null;
   goals: number | null;
+  penaltyGoals: number;
+  freeKickGoals: number;
   assists: number | null;
   yellowCards: number | null;
   redCards: number | null;

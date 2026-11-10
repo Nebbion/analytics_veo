@@ -23,6 +23,8 @@ type ChampionshipPlayerStat = {
   playerName: string;
   competition: 'CAMPIONATO' | 'COPPA';
   goals: number;
+  penaltyGoals: number;
+  freeKickGoals: number;
   assists: number;
   yellowCards: number;
   redCards: number;
@@ -125,11 +127,11 @@ function LeagueStandings() {
   </section>;
 }
 
-function SeasonalRanking({ title, rows }: { title: string; rows: { name: string; value: number }[] }) {
+function SeasonalRanking({ title, rows }: { title: string; rows: { name: string; value: number; displayValue?: string }[] }) {
   return <section className="panel tablePanel seasonalRankingPanel">
     <div className="sectionTitle"><div><span className="eyebrow">CAMPIONATO</span><h2>{title}</h2></div><span>totale</span></div>
     <div className="rankingList">{rows.length
-      ? rows.slice(0, 8).map((row, index) => <div className="rankRow" key={row.name}><span className="rankNo">{index + 1}</span><strong>{row.name}</strong><span>{number(row.value)}</span></div>)
+      ? rows.slice(0, 8).map((row, index) => <div className="rankRow" key={row.name}><span className="rankNo">{index + 1}</span><strong>{row.name}</strong><span>{row.displayValue ?? number(row.value)}</span></div>)
       : <p className="rankEmpty">Nessun dato disponibile.</p>}
     </div>
   </section>;
@@ -169,13 +171,15 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
   const sentOffPlayers = [...discipline.values()]
     .filter(player => player.redCards > 0)
     .sort((a, b) => b.redCards - a.redCards || a.name.localeCompare(b.name, 'it'));
-  const production = new Map<string, { name: string; goals: number; assists: number }>();
+  const production = new Map<string, { name: string; goals: number; penaltyGoals: number; freeKickGoals: number; assists: number }>();
 
   playerStats.filter(stat => stat.competition === 'CAMPIONATO').forEach(stat => {
     const key = stat.playerId || stat.playerName;
     if (!key) return;
-    const current = production.get(key) ?? { name: stat.playerName || stat.playerId, goals: 0, assists: 0 };
+    const current = production.get(key) ?? { name: stat.playerName || stat.playerId, goals: 0, penaltyGoals: 0, freeKickGoals: 0, assists: 0 };
     current.goals += stat.goals;
+    current.penaltyGoals += stat.penaltyGoals;
+    current.freeKickGoals += stat.freeKickGoals;
     current.assists += stat.assists;
     production.set(key, current);
   });
@@ -183,7 +187,17 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
   const goalsRanking = [...production.values()]
     .filter(player => player.goals > 0)
     .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, 'it'))
-    .map(player => ({ name: player.name, value: player.goals }));
+    .map(player => {
+      const details = [
+        player.penaltyGoals > 0 ? `${number(player.penaltyGoals)} su rigore` : '',
+        player.freeKickGoals > 0 ? `${number(player.freeKickGoals)} su punizione` : '',
+      ].filter(Boolean).join(', ');
+      return {
+        name: player.name,
+        value: player.goals,
+        displayValue: `${number(player.goals)} gol${details ? ` (${details})` : ''}`,
+      };
+    });
   const assistsRanking = [...production.values()]
     .filter(player => player.assists > 0)
     .sort((a, b) => b.assists - a.assists || a.name.localeCompare(b.name, 'it'))

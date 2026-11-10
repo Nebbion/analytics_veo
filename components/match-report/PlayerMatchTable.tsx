@@ -1,6 +1,15 @@
 import type { MatchReportPlayer } from '../../lib/match-report/types';
 import { fmtNumber } from './utils';
 
+const goalValue = (player: MatchReportPlayer) => {
+  if (player.goals === null) return '—';
+  const details = [
+    player.penaltyGoals > 0 ? `${fmtNumber(player.penaltyGoals)} rig.` : '',
+    player.freeKickGoals > 0 ? `${fmtNumber(player.freeKickGoals)} pun.` : '',
+  ].filter(Boolean).join(', ');
+  return `${fmtNumber(player.goals)}${details ? ` (${details})` : ''}`;
+};
+
 export function PlayerMatchTable({ players }: { players: MatchReportPlayer[] }) {
   return <section className="panel tablePanel reportTablePanel">
     <div className="sectionTitle"><div><span className="eyebrow">PLAYER STATS</span><h2>Statistiche individuali</h2></div><span>{players.length} giocatori</span></div>
@@ -18,7 +27,7 @@ export function PlayerMatchTable({ players }: { players: MatchReportPlayer[] }) 
             <td>{player.jerseyNumber ?? '—'}</td>
             <td><strong>{player.name}</strong></td>
             <td>{fmtNumber(player.minutes)}</td>
-            <td>{fmtNumber(player.goals)}</td>
+            <td>{goalValue(player)}</td>
             <td>{fmtNumber(player.assists)}</td>
             <td>{fmtNumber(player.yellowCards)}</td>
             <td>{fmtNumber(player.redCards)}</td>
