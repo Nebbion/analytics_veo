@@ -189,9 +189,9 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
     .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, 'it'))
     .map(player => {
       const details = [
-        player.penaltyGoals > 0 ? `${number(player.penaltyGoals)} su rigore` : '',
-        player.freeKickGoals > 0 ? `${number(player.freeKickGoals)} su punizione` : '',
-      ].filter(Boolean).join(', ');
+        player.penaltyGoals > 0 ? `${number(player.penaltyGoals)} R` : '',
+        player.freeKickGoals > 0 ? `${number(player.freeKickGoals)} Pun.` : '',
+      ].filter(Boolean).join(' · ');
       return {
         name: player.name,
         value: player.goals,

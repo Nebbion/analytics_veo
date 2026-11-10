@@ -108,7 +108,10 @@ const goalBreakdown = (penaltyGoals: number, freeKickGoals: number) => [
   freeKickGoals > 0 ? `${int(freeKickGoals)} su punizione` : '',
 ].filter(Boolean).join(', ');
 const goalRankingValue = (goals: number, penaltyGoals: number, freeKickGoals: number) => {
-  const detail = goalBreakdown(penaltyGoals, freeKickGoals);
+  const detail = [
+    penaltyGoals > 0 ? `${int(penaltyGoals)} R` : '',
+    freeKickGoals > 0 ? `${int(freeKickGoals)} Pun.` : '',
+  ].filter(Boolean).join(' · ');
   return `${int(goals)} gol${detail ? ` (${detail})` : ''}`;
 };
 const matchGoalValue = (goals: number, penaltyGoals: number, freeKickGoals: number) => {
