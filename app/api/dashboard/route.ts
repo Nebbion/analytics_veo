@@ -531,25 +531,56 @@ export async function GET() {
   const appearanceKeys = new Set<string>();
   const starterKeys = new Set<string>();
   const substituteAppearanceKeys = new Set<string>();
+  const championshipAppearanceKeys = new Set<string>();
+  const championshipStarterKeys = new Set<string>();
+  const championshipSubstituteAppearanceKeys = new Set<string>();
+  const championshipMinutesByPlayer = new Map<string, number>();
+  const championshipMatchIds = new Set(
+    allMatches
+      .filter(match => competitionLabel(match) === 'CAMPIONATO')
+      .map(match => match.match_id)
+  );
 
   allLineups.forEach(row => {
     if (!row.titolare) return;
     const key = `${row.match_id}|${row.player_id}`;
     starterKeys.add(key);
     appearanceKeys.add(key);
+    if (championshipMatchIds.has(row.match_id)) {
+      championshipStarterKeys.add(key);
+      championshipAppearanceKeys.add(key);
+    }
   });
 
   allSubstitutions.forEach(row => {
-    if (row.player_out_id) appearanceKeys.add(`${row.match_id}|${row.player_out_id}`);
+    if (row.player_out_id) {
+      const key = `${row.match_id}|${row.player_out_id}`;
+      appearanceKeys.add(key);
+      if (championshipMatchIds.has(row.match_id)) championshipAppearanceKeys.add(key);
+    }
     if (row.player_in_id) {
       const key = `${row.match_id}|${row.player_in_id}`;
       substituteAppearanceKeys.add(key);
       appearanceKeys.add(key);
+      if (championshipMatchIds.has(row.match_id)) {
+        championshipSubstituteAppearanceKeys.add(key);
+        championshipAppearanceKeys.add(key);
+      }
     }
   });
 
   allStats.forEach(row => {
-    if (num(row.minuti) > 0) appearanceKeys.add(`${row.match_id}|${row.player_id}`);
+    if (championshipMatchIds.has(row.match_id)) {
+      championshipMinutesByPlayer.set(
+        row.player_id,
+        (championshipMinutesByPlayer.get(row.player_id) ?? 0) + num(row.minuti)
+      );
+    }
+    if (num(row.minuti) > 0) {
+      const key = `${row.match_id}|${row.player_id}`;
+      appearanceKeys.add(key);
+      if (championshipMatchIds.has(row.match_id)) championshipAppearanceKeys.add(key);
+    }
     const current = matchMetricTotals.get(row.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
     current.assists += optionalNum(row, assistKeys);
     current.yellowCards += optionalNum(row, yellowCardKeys);
@@ -634,6 +665,9 @@ export async function GET() {
     const appearances = [...appearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
     const starts = [...starterKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
     const substituteAppearances = [...substituteAppearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
+    const championshipAppearances = [...championshipAppearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
+    const championshipStarts = [...championshipStarterKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
+    const championshipSubstituteAppearances = [...championshipSubstituteAppearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
     const minutes = num(s?.minuti);
     const goalTypes = goalTypesByPlayer.get(p.player_id) ?? { penaltyGoals: 0, freeKickGoals: 0 };
 
@@ -643,6 +677,10 @@ export async function GET() {
       appearances,
       starts,
       substituteAppearances,
+      championshipAppearances,
+      championshipStarts,
+      championshipSubstituteAppearances,
+      championshipMinutes: championshipMinutesByPlayer.get(p.player_id) ?? 0,
       minutes,
       goals: num(s?.gol),
       penaltyGoals: goalTypes.penaltyGoals,

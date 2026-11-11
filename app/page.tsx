@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChampionshipDashboard } from '../components/ChampionshipDashboard';
 
 type Player = {
-  playerId: string; name: string; appearances: number; starts: number; substituteAppearances: number; minutes: number; goals: number; goalsPer90: number;
+  playerId: string; name: string; appearances: number; starts: number; substituteAppearances: number; championshipAppearances: number; championshipStarts: number; championshipSubstituteAppearances: number; championshipMinutes: number; minutes: number; goals: number; goalsPer90: number;
   penaltyGoals: number; freeKickGoals: number;
   assists: number; yellowCards: number; redCards: number;
   shots: number; shotsPer90: number; passes: number; completedPasses: number; passSuccess: number;
@@ -457,18 +457,21 @@ export default function Home() {
       }));
   }, [players, matches, teamMatches]);
   const participationRows = useMemo(() => [...teamPlayers]
-    .filter(p => p.appearances > 0 || p.starts > 0 || p.substituteAppearances > 0)
+    .filter(p => p.championshipAppearances > 0 || p.championshipStarts > 0 || p.championshipSubstituteAppearances > 0)
     .sort((a, b) =>
-      b.appearances - a.appearances ||
-      b.starts - a.starts ||
-      b.substituteAppearances - a.substituteAppearances ||
-      b.minutes - a.minutes ||
+      b.championshipAppearances - a.championshipAppearances ||
+      b.championshipStarts - a.championshipStarts ||
+      b.championshipSubstituteAppearances - a.championshipSubstituteAppearances ||
+      b.championshipMinutes - a.championshipMinutes ||
       a.name.localeCompare(b.name, 'it')
     ), [teamPlayers]);
-  const recentParticipationMatches = useMemo(() => [...teamMatches]
-    .filter(match => Boolean(match.date))
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-5), [teamMatches]);
+  const championshipParticipationMatches = useMemo(() => [...teamMatches]
+    .filter(match => match.competition === 'CAMPIONATO' && Boolean(match.date))
+    .sort((a, b) => a.date.localeCompare(b.date)), [teamMatches]);
+  const recentParticipationMatches = useMemo(
+    () => championshipParticipationMatches.slice(-5),
+    [championshipParticipationMatches]
+  );
 
   const team = useMemo(() => {
     const playedMatchIds = new Set(teamStats.map(m => m.matchId).filter(Boolean));
@@ -796,7 +799,7 @@ export default function Home() {
         </div>
       </section>}
       <section className="panel tablePanel participationPanel">
-        <div className="sectionTitle"><div><span className="eyebrow">UTILIZZO ROSA</span><h2>Titolari e subentrati</h2></div><span>{participationRows.length} giocatori impiegati</span></div>
+        <div className="sectionTitle"><div><span className="eyebrow">UTILIZZO ROSA · CAMPIONATO</span><h2>Titolari e subentrati</h2></div><span>{championshipParticipationMatches.length} gare · {participationRows.length} giocatori</span></div>
         <div className="tableWrap"><table className="participationTable">
           <thead><tr><th>#</th><th>Giocatore</th><th>Da titolare</th><th>Da subentrato</th><th>Ultime 5</th><th>Conteggio ultime 5</th><th>Presenze</th><th>% titolare</th><th>Minuti</th></tr></thead>
           <tbody>{participationRows.map((row, index) => {
@@ -811,10 +814,10 @@ export default function Home() {
             const recentSubstitutes = recentRoles.filter(role => role === 'S').length;
 
             return <tr key={row.playerId}>
-              <td>{index + 1}</td><td><strong>{row.name}</strong></td><td>{int(row.starts)}</td><td>{int(row.substituteAppearances)}</td>
+              <td>{index + 1}</td><td><strong>{row.name}</strong></td><td>{int(row.championshipStarts)}</td><td>{int(row.championshipSubstituteAppearances)}</td>
               <td><div className="recentRoleTrend">{recentRoles.map((role, roleIndex) => <span className={`recentRole recentRole${role === '—' ? 'None' : role}`} title={`${dateLabel(recentParticipationMatches[roleIndex]?.date ?? '')} · ${opponentLabel(recentParticipationMatches[roleIndex]?.match ?? '')}`} key={`${row.playerId}-${recentParticipationMatches[roleIndex]?.matchId ?? roleIndex}`}>{role}</span>)}</div></td>
               <td><div className="recentRoleCount"><strong>{recentStarts} T</strong><span>{recentSubstitutes} S</span></div></td>
-              <td>{int(row.appearances)}</td><td>{row.appearances > 0 ? `${fmt(row.starts * 100 / row.appearances, 0)}%` : '—'}</td><td>{int(row.minutes)}</td>
+              <td>{int(row.championshipAppearances)}</td><td>{row.championshipAppearances > 0 ? `${fmt(row.championshipStarts * 100 / row.championshipAppearances, 0)}%` : '—'}</td><td>{int(row.championshipMinutes)}</td>
             </tr>;
           })}</tbody>
         </table></div>
