@@ -51,6 +51,17 @@ type TeamMatch = {
     tackles: number;
   } | null;
 };
+type DisciplineEvent = {
+  matchId: string;
+  date: string;
+  match: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  playerId: string;
+  playerName: string;
+  type: 'YELLOW_CARD' | 'SECOND_YELLOW_CARD' | 'RED_CARD';
+  minute: number;
+  injuryTime: boolean;
+};
 type TacticalKind = 'average' | 'shot' | 'tackle';
 type TacticalPoint = {
   id: string;
@@ -68,7 +79,7 @@ type TacticalPoint = {
   outcome: string;
 };
 type TacticalData = { averagePositions: TacticalPoint[]; shots: TacticalPoint[]; tackles: TacticalPoint[]; source: 'supabase' | 'none' };
-type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamPlayers?: Player[]; teamStats?: Match[]; teamMatches?: TeamMatch[]; tactics?: TacticalData; error?: string };
+type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamPlayers?: Player[]; teamStats?: Match[]; teamMatches?: TeamMatch[]; disciplineEvents?: DisciplineEvent[]; tactics?: TacticalData; error?: string };
 type PlayerCompetitionStats = {
   label: 'Campionato' | 'Coppa';
   appearances: number;
@@ -693,7 +704,7 @@ export default function Home() {
       {data.role === 'STAFF' && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
     </nav>
 
-    {view === 'home' && <ChampionshipDashboard matches={teamMatches} playerStats={teamStats} />}
+    {view === 'home' && <ChampionshipDashboard matches={teamMatches} playerStats={teamStats} disciplineEvents={data.disciplineEvents ?? []} />}
 
     {view === 'player' && <>
       <section className="hero"><div><p className="eyebrow">PLAYER CENTER</p><h1>{data.role === 'GIOCATORE' ? 'Profilo personale' : 'Dashboard giocatore'}</h1><p>{data.role === 'GIOCATORE' ? 'Le tue statistiche stagionali e tutte le partite della squadra.' : 'Statistiche stagionali e rendimento partita per partita.'}</p></div>{data.role === 'STAFF' && <label className="selector">Giocatore<select value={selected} onChange={e => setSelected(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label>}</section>

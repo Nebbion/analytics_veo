@@ -30,6 +30,26 @@ type ChampionshipPlayerStat = {
   redCards: number;
 };
 
+type ChampionshipDisciplineEvent = {
+  matchId: string;
+  date: string;
+  match: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  playerId: string;
+  playerName: string;
+  type: 'YELLOW_CARD' | 'SECOND_YELLOW_CARD' | 'RED_CARD';
+  minute: number;
+  injuryTime: boolean;
+};
+
+type DisciplineProgress = {
+  currentCount: number;
+  nextThreshold: number;
+  remaining: number;
+  suspensions: number;
+  historyCount: number;
+};
+
 type Standing = {
   position: number;
   team: string;
@@ -54,10 +74,50 @@ type StandingsResponse = {
 const STANDINGS_SOURCE_URL = 'https://www.asdvba.it/campionati0gironigiornatepartite_classifica.php?idgirone=16';
 
 const number = (value: number) => value.toLocaleString('it-IT');
+const CARD_THRESHOLDS = [5, 5, 4, 3, 2, 1] as const;
 
 const dateLabel = (date: string) => date
   ? new Date(`${date}T12:00:00`).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
   : '—';
+
+const historyDateLabel = (date: string) => date
+  ? new Date(`${date}T12:00:00`).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })
+  : '—';
+
+const disciplineEventKey = (event: ChampionshipDisciplineEvent) =>
+  [event.matchId, event.playerId, event.type, event.minute].join('|');
+
+const calculateDisciplineProgress = (events: ChampionshipDisciplineEvent[]) => {
+  let stage = 0;
+  let currentCount = 0;
+  let suspensions = 0;
+  const suspensionByEvent = new Map<string, number>();
+
+  events.forEach(event => {
+    currentCount += 1;
+    const threshold = CARD_THRESHOLDS[Math.min(stage, CARD_THRESHOLDS.length - 1)];
+
+    if (currentCount >= threshold) {
+      suspensions += 1;
+      suspensionByEvent.set(disciplineEventKey(event), suspensions);
+      currentCount = 0;
+      stage = Math.min(stage + 1, CARD_THRESHOLDS.length - 1);
+    }
+  });
+
+  const nextThreshold = CARD_THRESHOLDS[Math.min(stage, CARD_THRESHOLDS.length - 1)];
+
+  return {
+    progress: {
+      currentCount,
+      nextThreshold,
+      remaining: nextThreshold - currentCount,
+      suspensions,
+      historyCount: events.length,
+    } satisfies DisciplineProgress,
+    suspensionByEvent,
+  };
+};
 
 const opponentLabel = (match: string) => {
   const namedScore = match.match(/^\s*(.+?)\s+(\d+)\s*[-–—]\s*(.+?)\s+(\d+)\s*$/);
@@ -137,7 +197,7 @@ function SeasonalRanking({ title, rows }: { title: string; rows: { name: string;
   </section>;
 }
 
-export function ChampionshipDashboard({ matches, playerStats }: { matches: ChampionshipMatch[]; playerStats: ChampionshipPlayerStat[] }) {
+export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }: { matches: ChampionshipMatch[]; playerStats: ChampionshipPlayerStat[]; disciplineEvents: ChampionshipDisciplineEvent[] }) {
   const championshipMatches = matches
     .filter(match => match.competition === 'CAMPIONATO' && match.outcome !== null)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -152,14 +212,14 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
   const points = wins * 3 + draws;
   const recentMatches = championshipMatches.slice(-5);
   const latestMatch = championshipMatches.at(-1);
-  const discipline = new Map<string, { name: string; yellowCards: number; redCards: number }>();
+  const discipline = new Map<string, { playerId: string; name: string; yellowCards: number; redCards: number }>();
 
   playerStats
     .filter(stat => stat.competition === 'CAMPIONATO')
     .forEach(stat => {
       const key = stat.playerId || stat.playerName;
       if (!key) return;
-      const current = discipline.get(key) ?? { name: stat.playerName || stat.playerId, yellowCards: 0, redCards: 0 };
+      const current = discipline.get(key) ?? { playerId: stat.playerId, name: stat.playerName || stat.playerId, yellowCards: 0, redCards: 0 };
       current.yellowCards += stat.yellowCards;
       current.redCards += stat.redCards;
       discipline.set(key, current);
@@ -171,6 +231,33 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
   const sentOffPlayers = [...discipline.values()]
     .filter(player => player.redCards > 0)
     .sort((a, b) => b.redCards - a.redCards || a.name.localeCompare(b.name, 'it'));
+  const championshipDisciplineEvents = disciplineEvents
+    .filter(event => event.competition === 'CAMPIONATO')
+    .sort((a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.minute - b.minute ||
+      a.playerName.localeCompare(b.playerName, 'it')
+    );
+  const yellowEventsByPlayer = new Map<string, ChampionshipDisciplineEvent[]>();
+
+  championshipDisciplineEvents
+    .filter(event => event.type === 'YELLOW_CARD' || event.type === 'SECOND_YELLOW_CARD')
+    .forEach(event => {
+      const key = event.playerId || event.playerName;
+      const current = yellowEventsByPlayer.get(key) ?? [];
+      current.push(event);
+      yellowEventsByPlayer.set(key, current);
+    });
+
+  const disciplineProgress = new Map<string, DisciplineProgress>();
+  const suspensionByEvent = new Map<string, number>();
+
+  yellowEventsByPlayer.forEach((events, playerId) => {
+    const calculation = calculateDisciplineProgress(events);
+    disciplineProgress.set(playerId, calculation.progress);
+    calculation.suspensionByEvent.forEach((value, key) => suspensionByEvent.set(key, value));
+  });
+  const disciplineHistory = [...championshipDisciplineEvents].reverse();
   const production = new Map<string, { name: string; goals: number; penaltyGoals: number; freeKickGoals: number; assists: number }>();
 
   playerStats.filter(stat => stat.competition === 'CAMPIONATO').forEach(stat => {
@@ -258,9 +345,23 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
       <section className="panel tablePanel homeDisciplinePanel">
         <div className="sectionTitle"><div><span className="eyebrow">DISCIPLINA</span><h2>Ammoniti</h2></div><span>{yellowCards} cartellini</span></div>
         <div className="homeDisciplineList">
-          {bookedPlayers.length ? bookedPlayers.map((player, index) => <div className="homeDisciplineRow" key={player.name}>
-            <span className="rankNo">{index + 1}</span><strong>{player.name}</strong><span className="disciplineCount yellowCount">{player.yellowCards}</span>
-          </div>) : <p className="rankEmpty">Nessuna ammonizione in campionato.</p>}
+          {bookedPlayers.length ? bookedPlayers.map((player, index) => {
+            const progress = disciplineProgress.get(player.playerId || player.name);
+            const historyComplete = progress ? progress.historyCount === player.yellowCards : false;
+
+            return <div className="homeDisciplineRow" key={player.playerId || player.name}>
+              <span className="rankNo">{index + 1}</span>
+              <div className="disciplinePlayerInfo">
+                <strong>{player.name}</strong>
+                {progress ? <small>
+                  Conteggio {progress.currentCount}/{progress.nextThreshold} · {progress.remaining} {progress.remaining === 1 ? 'ammonizione' : 'ammonizioni'} alla squalifica
+                  {progress.suspensions > 0 ? ` · ${progress.suspensions} ${progress.suspensions === 1 ? 'giornata maturata' : 'giornate maturate'}` : ''}
+                  {!historyComplete ? ' · storico parziale' : ''}
+                </small> : <small>Storico eventi non disponibile</small>}
+              </div>
+              <span className="disciplineCount yellowCount">{player.yellowCards}</span>
+            </div>;
+          }) : <p className="rankEmpty">Nessuna ammonizione in campionato.</p>}
         </div>
       </section>
 
@@ -273,5 +374,40 @@ export function ChampionshipDashboard({ matches, playerStats }: { matches: Champ
         </div>
       </section>
     </div>
+
+    <section className="panel tablePanel disciplineHistoryPanel">
+      <div className="sectionTitle">
+        <div><span className="eyebrow">DISCIPLINA</span><h2>Storico cartellini</h2></div>
+        <span>{disciplineHistory.length} eventi · solo campionato</span>
+      </div>
+      <p className="disciplineRuleNote">Progressione ammonizioni: 5 → 5 → 4 → 3 → 2 → 1. Al raggiungimento della soglia il conteggio riparte da zero; dalla soglia 1 ogni ammonizione matura una giornata di squalifica.</p>
+      {disciplineHistory.length ? <div className="tableWrap"><table className="disciplineHistoryTable">
+        <thead><tr><th>Data</th><th>Partita</th><th>Giocatore</th><th>Cartellino</th><th>Minuto</th><th>Effetto</th></tr></thead>
+        <tbody>{disciplineHistory.map((event, index) => {
+          const suspensionNumber = suspensionByEvent.get(disciplineEventKey(event));
+          const cardLabel = event.type === 'YELLOW_CARD'
+            ? 'Ammonizione'
+            : event.type === 'SECOND_YELLOW_CARD'
+              ? 'Seconda ammonizione'
+              : 'Espulsione';
+          const effect = suspensionNumber
+            ? `${event.type === 'SECOND_YELLOW_CARD' ? 'Espulsione + ' : ''}1 giornata maturata per cumulo (n° ${suspensionNumber})`
+            : event.type === 'SECOND_YELLOW_CARD'
+              ? 'Espulsione per doppia ammonizione'
+              : event.type === 'RED_CARD'
+                ? 'Espulsione diretta'
+                : '—';
+
+          return <tr key={`${disciplineEventKey(event)}-${index}`}>
+            <td>{historyDateLabel(event.date)}</td>
+            <td><a href={`/matches/${encodeURIComponent(event.matchId)}`}>{event.match}</a></td>
+            <td><strong>{event.playerName}</strong></td>
+            <td><span className={`disciplineEventBadge ${event.type === 'YELLOW_CARD' ? 'yellow' : 'red'}`}>{cardLabel}</span></td>
+            <td>{event.minute}&apos;{event.injuryTime ? ' rec.' : ''}</td>
+            <td>{effect}</td>
+          </tr>;
+        })}</tbody>
+      </table></div> : <p className="rankEmpty">Nessun evento cartellino dettagliato disponibile dai report YouCoach.</p>}
+    </section>
   </>;
 }

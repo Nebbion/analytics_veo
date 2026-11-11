@@ -54,9 +54,9 @@ type SubstitutionRow = {
   player_in_id: string;
 };
 
-type OfficialGoalRow = {
+type OfficialEventRow = {
   match_id: string;
-  player_id: string;
+  player_id: string | null;
   player_name: string;
   event_type: string;
   goal_type: string | null;
@@ -442,7 +442,7 @@ export async function GET() {
   // RLS consente agli utenti attivi i dati completi necessari alle viste
   // Squadra, Tattica e Report partita. Qui manteniamo comunque separati
   // il profilo personale del giocatore dai dati aggregati della squadra.
-  const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult, substitutionsResult, officialGoalsResult] = await Promise.all([
+  const [playersResult, matchesResult, statsResult, seasonResult, lineupsResult, substitutionsResult, officialEventsResult] = await Promise.all([
     supabase
       .from('players')
       .select('player_id,nome')
@@ -465,8 +465,7 @@ export async function GET() {
       .select('match_id,player_out_id,player_in_id'),
     supabase
       .from('match_events')
-      .select('match_id,player_id,player_name,event_type,goal_type,minuto,recupero')
-      .eq('event_type', 'GOAL'),
+      .select('match_id,player_id,player_name,event_type,goal_type,minuto,recupero'),
   ]);
 
   if (playersResult.error) {
@@ -504,7 +503,11 @@ export async function GET() {
   // La dashboard resta disponibile anche prima dell'esecuzione manuale della migration.
   const allLineups = lineupsResult.error ? [] : (lineupsResult.data ?? []) as LineupRow[];
   const allSubstitutions = substitutionsResult.error ? [] : (substitutionsResult.data ?? []) as SubstitutionRow[];
-  const allOfficialGoals = officialGoalsResult.error ? [] : (officialGoalsResult.data ?? []) as OfficialGoalRow[];
+  const allOfficialEvents = officialEventsResult.error ? [] : (officialEventsResult.data ?? []) as OfficialEventRow[];
+  const allOfficialGoals = allOfficialEvents.filter(
+    (row): row is OfficialEventRow & { player_id: string } =>
+      row.event_type === 'GOAL' && Boolean(row.player_id)
+  );
   const goalTypesByMatchPlayer = new Map<string, { penaltyGoals: number; freeKickGoals: number }>();
 
   allOfficialGoals.forEach(row => {
@@ -555,6 +558,35 @@ export async function GET() {
   const playerNameMap = new Map(
     allPlayers.map(p => [p.player_id, p.nome])
   );
+  const matchRowsById = new Map(
+    allMatches.map(match => [match.match_id, match])
+  );
+  const disciplineEvents = allOfficialEvents
+    .filter(row =>
+      Boolean(row.player_id) &&
+      ['YELLOW_CARD', 'SECOND_YELLOW_CARD', 'RED_CARD'].includes(row.event_type)
+    )
+    .map(row => {
+      const match = matchRowsById.get(row.match_id);
+      const playerId = row.player_id ?? '';
+
+      return {
+        matchId: row.match_id,
+        date: match?.data ?? '',
+        match: match?.partita ?? row.match_id,
+        competition: competitionLabel(match),
+        playerId,
+        playerName: playerNameMap.get(playerId) || row.player_name || playerId,
+        type: row.event_type as 'YELLOW_CARD' | 'SECOND_YELLOW_CARD' | 'RED_CARD',
+        minute: num(row.minuto),
+        injuryTime: row.recupero === true,
+      };
+    })
+    .sort((a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.minute - b.minute ||
+      a.playerName.localeCompare(b.playerName, 'it')
+    );
   const scorersByMatchId = new Map<string, {
     playerId: string;
     playerName: string;
@@ -790,6 +822,7 @@ export async function GET() {
       teamPlayers: allSeasonalPlayers,
       teamStats: allMatchStats,
       teamMatches,
+      disciplineEvents,
       tactics,
       source: 'supabase',
     },
