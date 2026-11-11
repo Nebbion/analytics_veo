@@ -743,6 +743,16 @@ export async function GET() {
     });
     startersByMatchId.set(row.match_id, starters);
   });
+  const substitutesByMatchId = new Map<string, { playerId: string; name: string }[]>();
+  allSubstitutions.forEach(row => {
+    if (!row.player_in_id) return;
+    const substitutes = substitutesByMatchId.get(row.match_id) ?? [];
+    substitutes.push({
+      playerId: row.player_in_id,
+      name: playerNameMap.get(row.player_in_id) || row.player_in_id,
+    });
+    substitutesByMatchId.set(row.match_id, substitutes);
+  });
 
   const matchSummaryById = new Map<string, {
     playersUsed: number;
@@ -800,6 +810,10 @@ export async function GET() {
         (a.listNumber ?? Number.MAX_SAFE_INTEGER) - (b.listNumber ?? Number.MAX_SAFE_INTEGER) ||
         a.name.localeCompare(b.name, 'it')
       );
+    const substitutes = [...new Map(
+      (substitutesByMatchId.get(m.match_id) ?? []).map(player => [player.playerId || player.name, player])
+    ).values()]
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
     return {
       matchId: m.match_id,
@@ -812,6 +826,7 @@ export async function GET() {
       outcome: score?.outcome ?? null,
       homeAway: rowText(m, ['casa_trasferta', 'home_away', 'venue', 'sede']),
       starters,
+      substitutes,
       scorers: (scorersByMatchId.get(m.match_id) ?? []).sort((a, b) => a.minute - b.minute),
       summary: matchSummaryById.get(m.match_id) ?? null,
     };

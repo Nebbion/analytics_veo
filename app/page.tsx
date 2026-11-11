@@ -35,6 +35,7 @@ type TeamMatch = {
   outcome: 'V' | 'N' | 'P' | null;
   homeAway: string;
   starters: { playerId: string; name: string; listNumber: number | null }[];
+  substitutes: { playerId: string; name: string }[];
   scorers: { playerId: string; playerName: string; minute: number; injuryTime: boolean; goalType: 'RIGORE' | 'PUNIZIONE' | null }[];
   summary: {
     playersUsed: number;
@@ -464,6 +465,10 @@ export default function Home() {
       b.minutes - a.minutes ||
       a.name.localeCompare(b.name, 'it')
     ), [teamPlayers]);
+  const recentParticipationMatches = useMemo(() => [...teamMatches]
+    .filter(match => Boolean(match.date))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-5), [teamMatches]);
 
   const team = useMemo(() => {
     const playedMatchIds = new Set(teamStats.map(m => m.matchId).filter(Boolean));
@@ -793,10 +798,25 @@ export default function Home() {
       <section className="panel tablePanel participationPanel">
         <div className="sectionTitle"><div><span className="eyebrow">UTILIZZO ROSA</span><h2>Titolari e subentrati</h2></div><span>{participationRows.length} giocatori impiegati</span></div>
         <div className="tableWrap"><table className="participationTable">
-          <thead><tr><th>#</th><th>Giocatore</th><th>Da titolare</th><th>Da subentrato</th><th>Presenze</th><th>% titolare</th><th>Minuti</th></tr></thead>
-          <tbody>{participationRows.map((row, index) => <tr key={row.playerId}>
-            <td>{index + 1}</td><td><strong>{row.name}</strong></td><td>{int(row.starts)}</td><td>{int(row.substituteAppearances)}</td><td>{int(row.appearances)}</td><td>{row.appearances > 0 ? `${fmt(row.starts * 100 / row.appearances, 0)}%` : '—'}</td><td>{int(row.minutes)}</td>
-          </tr>)}</tbody>
+          <thead><tr><th>#</th><th>Giocatore</th><th>Da titolare</th><th>Da subentrato</th><th>Ultime 5</th><th>Conteggio ultime 5</th><th>Presenze</th><th>% titolare</th><th>Minuti</th></tr></thead>
+          <tbody>{participationRows.map((row, index) => {
+            const recentRoles = recentParticipationMatches.map(match =>
+              match.starters.some(player => player.playerId === row.playerId)
+                ? 'T'
+                : match.substitutes.some(player => player.playerId === row.playerId)
+                  ? 'S'
+                  : '—'
+            );
+            const recentStarts = recentRoles.filter(role => role === 'T').length;
+            const recentSubstitutes = recentRoles.filter(role => role === 'S').length;
+
+            return <tr key={row.playerId}>
+              <td>{index + 1}</td><td><strong>{row.name}</strong></td><td>{int(row.starts)}</td><td>{int(row.substituteAppearances)}</td>
+              <td><div className="recentRoleTrend">{recentRoles.map((role, roleIndex) => <span className={`recentRole recentRole${role === '—' ? 'None' : role}`} title={`${dateLabel(recentParticipationMatches[roleIndex]?.date ?? '')} · ${opponentLabel(recentParticipationMatches[roleIndex]?.match ?? '')}`} key={`${row.playerId}-${recentParticipationMatches[roleIndex]?.matchId ?? roleIndex}`}>{role}</span>)}</div></td>
+              <td><div className="recentRoleCount"><strong>{recentStarts} T</strong><span>{recentSubstitutes} S</span></div></td>
+              <td>{int(row.appearances)}</td><td>{row.appearances > 0 ? `${fmt(row.starts * 100 / row.appearances, 0)}%` : '—'}</td><td>{int(row.minutes)}</td>
+            </tr>;
+          })}</tbody>
         </table></div>
       </section>
       <TeamMatchesSection matches={teamMatches} />
