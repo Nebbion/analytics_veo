@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChampionshipDashboard } from '../components/ChampionshipDashboard';
 
 type Player = {
-  playerId: string; name: string; appearances: number; minutes: number; goals: number; goalsPer90: number;
+  playerId: string; name: string; appearances: number; starts: number; substituteAppearances: number; minutes: number; goals: number; goalsPer90: number;
   penaltyGoals: number; freeKickGoals: number;
   assists: number; yellowCards: number; redCards: number;
   shots: number; shotsPer90: number; passes: number; completedPasses: number; passSuccess: number;
@@ -455,6 +455,15 @@ export default function Home() {
         matchMinutes: teamMatches.map(match => minutesByPlayerMatch.get(`${p.playerId}:${match.matchId}`) ?? 0),
       }));
   }, [players, matches, teamMatches]);
+  const participationRows = useMemo(() => [...teamPlayers]
+    .filter(p => p.appearances > 0 || p.starts > 0 || p.substituteAppearances > 0)
+    .sort((a, b) =>
+      b.appearances - a.appearances ||
+      b.starts - a.starts ||
+      b.substituteAppearances - a.substituteAppearances ||
+      b.minutes - a.minutes ||
+      a.name.localeCompare(b.name, 'it')
+    ), [teamPlayers]);
 
   const team = useMemo(() => {
     const playedMatchIds = new Set(teamStats.map(m => m.matchId).filter(Boolean));
@@ -781,6 +790,15 @@ export default function Home() {
           {team.averageSpeed > 0 && <Stat label="Velocità media" value={fmt(team.averageSpeed, 1)} suffix=" km/h" />}
         </div>
       </section>}
+      <section className="panel tablePanel participationPanel">
+        <div className="sectionTitle"><div><span className="eyebrow">UTILIZZO ROSA</span><h2>Titolari e subentrati</h2></div><span>{participationRows.length} giocatori impiegati</span></div>
+        <div className="tableWrap"><table className="participationTable">
+          <thead><tr><th>#</th><th>Giocatore</th><th>Da titolare</th><th>Da subentrato</th><th>Presenze</th><th>% titolare</th><th>Minuti</th></tr></thead>
+          <tbody>{participationRows.map((row, index) => <tr key={row.playerId}>
+            <td>{index + 1}</td><td><strong>{row.name}</strong></td><td>{int(row.starts)}</td><td>{int(row.substituteAppearances)}</td><td>{int(row.appearances)}</td><td>{row.appearances > 0 ? `${fmt(row.starts * 100 / row.appearances, 0)}%` : '—'}</td><td>{int(row.minutes)}</td>
+          </tr>)}</tbody>
+        </table></div>
+      </section>
       <TeamMatchesSection matches={teamMatches} />
       <div className="twoCol"><RankTable title="Gol campionato" metricLabel="totale" rows={competitionRankings.campionato.goals} /><RankTable title="Assist campionato" metricLabel="totale" rows={competitionRankings.campionato.assists} /></div>
       <div className="twoCol"><RankTable title="Gol coppa" metricLabel="totale" rows={competitionRankings.coppa.goals} /><RankTable title="Assist coppa" metricLabel="totale" rows={competitionRankings.coppa.assists} /></div>

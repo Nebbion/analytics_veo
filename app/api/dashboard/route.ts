@@ -529,14 +529,23 @@ export async function GET() {
   const seasonMap = new Map(allSeason.map(row => [row.player_id, row]));
   const matchMetricTotals = new Map<string, { assists: number; yellowCards: number; redCards: number }>();
   const appearanceKeys = new Set<string>();
+  const starterKeys = new Set<string>();
+  const substituteAppearanceKeys = new Set<string>();
 
   allLineups.forEach(row => {
-    if (row.titolare) appearanceKeys.add(`${row.match_id}|${row.player_id}`);
+    if (!row.titolare) return;
+    const key = `${row.match_id}|${row.player_id}`;
+    starterKeys.add(key);
+    appearanceKeys.add(key);
   });
 
   allSubstitutions.forEach(row => {
     if (row.player_out_id) appearanceKeys.add(`${row.match_id}|${row.player_out_id}`);
-    if (row.player_in_id) appearanceKeys.add(`${row.match_id}|${row.player_in_id}`);
+    if (row.player_in_id) {
+      const key = `${row.match_id}|${row.player_in_id}`;
+      substituteAppearanceKeys.add(key);
+      appearanceKeys.add(key);
+    }
   });
 
   allStats.forEach(row => {
@@ -623,6 +632,8 @@ export async function GET() {
     const s = seasonMap.get(p.player_id);
     const matchTotals = matchMetricTotals.get(p.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
     const appearances = [...appearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
+    const starts = [...starterKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
+    const substituteAppearances = [...substituteAppearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
     const minutes = num(s?.minuti);
     const goalTypes = goalTypesByPlayer.get(p.player_id) ?? { penaltyGoals: 0, freeKickGoals: 0 };
 
@@ -630,6 +641,8 @@ export async function GET() {
       playerId: p.player_id,
       name: p.nome,
       appearances,
+      starts,
+      substituteAppearances,
       minutes,
       goals: num(s?.gol),
       penaltyGoals: goalTypes.penaltyGoals,
