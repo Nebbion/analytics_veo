@@ -1,0 +1,559 @@
+{
+  "name": "LND-WATCHER 2.0 - Report Prepartita",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## LND-WATCHER 2.0 — Report prepartita\n\nWorkflow importato **disattivato**.\n\nPrima del test:\n1. assegna la credenziale PostgreSQL minima a tutti i nodi Postgres;\n2. sostituisci `REPLACE_WITH_TELEGRAM_CHAT_ID` nel nodo **Report Config**;\n3. assegna la credenziale Telegram;\n4. lascia `telegramEnabled: false` durante lo shadow test.\n\nIl report distingue esplicitamente dati verificati e `NON_VERIFICABILE`.",
+        "height": 300,
+        "width": 700,
+        "color": 5
+      },
+      "id": "00000000-0000-4000-8000-000000000101",
+      "name": "SETUP REPORT - LEGGERE PRIMA",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1080,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 20 * * 5"
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000102",
+      "name": "Friday 20:05",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1060,
+        80
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "00000000-0000-4000-8000-000000000103",
+      "name": "Manual Report Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1060,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst parts = new Intl.DateTimeFormat('en-CA', {\n  timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit'\n}).formatToParts(now);\nconst get = type => parts.find(p => p.type === type)?.value;\nconst localDate = [get('year'), get('month'), get('day')].join('-');\nconst config = {\n  workflowVersion: '2.0.0-phase1',\n  timezone: 'Europe/Rome',\n  telegramEnabled: false,\n  telegramChatId: 'REPLACE_WITH_TELEGRAM_CHAT_ID'\n};\nif (config.telegramEnabled && config.telegramChatId.startsWith('REPLACE_')) {\n  throw new Error('Configura telegramChatId prima di abilitare Telegram.');\n}\nreturn [{ json: {\n  ...config,\n  localDate,\n  scheduledFor: now.toISOString(),\n  runKey: 'lnd-watcher-prematch:' + localDate\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000104",
+      "name": "Report Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -820,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_agent_runs (\n    run_key, workflow_name, workflow_version, scheduled_for,\n    schedule_timezone, started_at, status, scope\n  )\n  select\n    p->>'runKey', 'LND-WATCHER 2.0 - Prematch',\n    p->>'workflowVersion', (p->>'scheduledFor')::timestamptz,\n    p->>'timezone', now(), 'RUNNING',\n    jsonb_build_object('mode', 'PREMATCH_REPORT')\n  from payload\n  on conflict (run_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect r.*\nfrom public.lnd_agent_runs r, payload\nwhere r.run_key = payload.p->>'runKey'\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000105",
+      "name": "Open Report Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        -580,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with villanovese as (\n  select id from public.lnd_teams\n  where team_key = 'it-veneto:asd-villanovese'\n),\nnext_fixture as (\n  select f.*\n  from public.lnd_fixtures f\n  cross join villanovese v\n  where v.id in (f.home_team_id, f.away_team_id)\n    and f.status in ('SCHEDULED', 'RESCHEDULED')\n    and f.scheduled_date >= (now() at time zone 'Europe/Rome')::date\n  order by f.scheduled_date, f.kickoff_time nulls last, f.id\n  limit 1\n),\nrelevant_teams as (\n  select nf.home_team_id as team_id, 'HOME'::text as venue\n  from next_fixture nf\n  union all\n  select nf.away_team_id, 'AWAY'::text\n  from next_fixture nf\n),\nmeasure_summary as (\n  select\n    dm.team_id,\n    dm.person_id,\n    count(*) filter (where dm.measure_type = 'DIFFIDA')::integer as diffide,\n    count(*) filter (\n      where dm.measure_type in ('SUSPENSION', 'EXPULSION')\n    )::integer as suspension_measures,\n    coalesce(sum(dm.gamedays) filter (\n      where dm.measure_type in ('SUSPENSION', 'EXPULSION')\n    ), 0)::integer as imposed_gamedays,\n    max(d.published_at) as latest_source_at\n  from public.lnd_disciplinary_measures dm\n  join public.lnd_documents d on d.id = dm.document_id\n  join next_fixture nf\n    on nf.season_id = dm.season_id\n   and nf.competition_id = dm.competition_id\n  where dm.record_status = 'ACTIVE'\n    and dm.verification_status = 'VERIFIED'\n  group by dm.team_id, dm.person_id\n),\nledger_balance as (\n  select\n    sl.team_id,\n    sl.person_id,\n    sum(sl.delta_gamedays)::integer as residual_gamedays\n  from public.lnd_suspension_ledger sl\n  join public.lnd_disciplinary_measures dm on dm.id = sl.measure_id\n  join next_fixture nf\n    on nf.season_id = sl.season_id\n   and nf.competition_id = sl.competition_id\n  where sl.verification_status = 'VERIFIED'\n    and dm.record_status = 'ACTIVE'\n  group by sl.team_id, sl.person_id\n)\nselect\n  nf.id as fixture_id,\n  nf.scheduled_date,\n  nf.kickoff_time,\n  nf.kickoff_timezone,\n  nf.status as fixture_status,\n  nf.verification_status as fixture_verification_status,\n  c.official_name as competition_name,\n  c.kind as competition_kind,\n  home.official_name as home_team_name,\n  away.official_name as away_team_name,\n  rt.venue,\n  t.id as team_id,\n  t.official_name as team_name,\n  t.verification_status as team_verification_status,\n  p.id as person_id,\n  p.display_name,\n  p.verification_status as person_verification_status,\n  coalesce(ms.diffide, 0) as diffide,\n  coalesce(ms.suspension_measures, 0) as suspension_measures,\n  coalesce(ms.imposed_gamedays, 0) as imposed_gamedays,\n  lb.residual_gamedays,\n  ms.latest_source_at,\n  case\n    when nf.verification_status <> 'VERIFIED' then 'NON_VERIFICABILE'\n    when p.id is null then 'NON_VERIFICABILE'\n    when p.verification_status <> 'VERIFIED' then 'NON_VERIFICABILE'\n    when lb.residual_gamedays is not null and lb.residual_gamedays < 0\n      then 'NON_VERIFICABILE'\n    else 'OK'\n  end as report_data_status\nfrom next_fixture nf\njoin public.lnd_competitions c on c.id = nf.competition_id\njoin public.lnd_teams home on home.id = nf.home_team_id\njoin public.lnd_teams away on away.id = nf.away_team_id\njoin relevant_teams rt on true\njoin public.lnd_teams t on t.id = rt.team_id\nleft join public.lnd_registrations r\n  on r.team_id = t.id\n and r.season_id = nf.season_id\n and r.status = 'ACTIVE'\n and (r.valid_from is null or r.valid_from <= nf.scheduled_date)\n and (r.valid_to is null or r.valid_to >= nf.scheduled_date)\nleft join public.lnd_persons p on p.id = r.person_id\nleft join measure_summary ms\n  on ms.team_id = t.id and ms.person_id = p.id\nleft join ledger_balance lb\n  on lb.team_id = t.id and lb.person_id = p.id\norder by rt.venue, p.display_name nulls last;",
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000106",
+      "name": "Get Prematch Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        -340,
+        140
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(item => item.json).filter(row => row.fixture_id);\nconst cfg = $('Report Config').first().json;\nconst run = $('Open Report Run').first().json;\nif (!rows.length) {\n  return [{ json: { hasReport: false, runId: run.id } }];\n}\nconst first = rows[0];\nconst relevant = rows.filter(row =>\n  row.person_id && (\n    Number(row.diffide) > 0 ||\n    Number(row.suspension_measures) > 0 ||\n    Number(row.imposed_gamedays) > 0 ||\n    row.residual_gamedays !== null\n  )\n);\nconst status = rows.some(row => row.report_data_status === 'NON_VERIFICABILE')\n  ? 'NON_VERIFICABILE'\n  : 'PARSED';\nconst time = first.kickoff_time ? String(first.kickoff_time).slice(0, 5) : 'orario non disponibile';\nconst lines = [\n  '⚽ REPORT PREPARTITA — LND-WATCHER 2.0',\n  '',\n  '**Gara:** ' + first.home_team_name + ' - ' + first.away_team_name,\n  '**Data:** ' + first.scheduled_date + ' — ' + time,\n  '**Competizione:** ' + first.competition_name + ' (' + first.competition_kind + ')',\n  '**Stato dati:** ' + status,\n  ''\n];\nif (!relevant.length) {\n  lines.push('Nessun provvedimento ufficiale VERIFIED con saldo disciplinare disponibile per i tesserati registrati.');\n} else {\n  lines.push('**Situazioni disciplinari VERIFIED:**');\n  for (const row of relevant) {\n    lines.push(\n      '- ' + row.team_name + ' — ' + row.display_name +\n      ': diffide ' + Number(row.diffide || 0) +\n      ', provvedimenti ' + Number(row.suspension_measures || 0) +\n      ', giornate imposte ' + Number(row.imposed_gamedays || 0) +\n      ', residue ' + (row.residual_gamedays ?? 'NON_VERIFICABILE')\n    );\n  }\n}\nif (status === 'NON_VERIFICABILE') {\n  lines.push('', '⚠️ Calendario, identità o dati disciplinari non sono tutti VERIFIED: il report non sostituisce il Comunicato Ufficiale.');\n}\nconst contentMarkdown = lines.join('\\n');\nreturn [{ json: {\n  hasReport: true,\n  runId: run.id,\n  fixtureId: first.fixture_id,\n  localDate: cfg.localDate,\n  contentMarkdown,\n  telegramMessage: contentMarkdown.slice(0, 4000),\n  verificationStatus: status,\n  telegramEnabled: cfg.telegramEnabled,\n  telegramChatId: cfg.telegramChatId\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000107",
+      "name": "Build Prematch Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "30000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.hasReport }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000108",
+      "name": "Has Upcoming Fixture?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        140,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "binaryData": false,
+        "value": "={{ $json.contentMarkdown }}",
+        "type": "SHA256",
+        "dataPropertyName": "contentSha256",
+        "encoding": "hex"
+      },
+      "id": "00000000-0000-4000-8000-000000000109",
+      "name": "SHA256 Report Content",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        380,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_prematch_reports (\n    idempotency_key, fixture_id, source_run_id, generated_at,\n    data_cutoff_at, content_markdown, content_sha256,\n    verification_status, status\n  )\n  select\n    concat(\n      'prematch:', p->>'fixtureId', ':', p->>'localDate', ':',\n      left(lower(p->>'contentSha256'), 16)\n    ),\n    (p->>'fixtureId')::uuid,\n    (p->>'runId')::uuid,\n    now(),\n    now(),\n    p->>'contentMarkdown',\n    lower(p->>'contentSha256'),\n    p->>'verificationStatus',\n    'READY'\n  from payload\n  on conflict (idempotency_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect r.*\nfrom public.lnd_prematch_reports r, payload\nwhere r.idempotency_key = concat(\n  'prematch:', payload.p->>'fixtureId', ':', payload.p->>'localDate', ':',\n  left(lower(payload.p->>'contentSha256'), 16)\n)\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000110",
+      "name": "Insert Prematch Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        620,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const report = $input.first().json;\nconst built = $('Build Prematch Report').first().json;\nreturn [{ json: {\n  runId: built.runId,\n  reportId: report.id,\n  telegramMessage: built.telegramMessage,\n  telegramEnabled: built.telegramEnabled,\n  telegramChatId: built.telegramChatId\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000111",
+      "name": "Prepare Report Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "binaryData": false,
+        "value": "={{ $json.telegramChatId }}",
+        "type": "SHA256",
+        "dataPropertyName": "destinationRefHash",
+        "encoding": "hex"
+      },
+      "id": "00000000-0000-4000-8000-000000000112",
+      "name": "Hash Report Destination",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "binaryData": false,
+        "value": "={{ $json.telegramMessage }}",
+        "type": "SHA256",
+        "dataPropertyName": "payloadSha256",
+        "encoding": "hex"
+      },
+      "id": "00000000-0000-4000-8000-000000000113",
+      "name": "Hash Report Payload",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_notifications (\n    dedupe_key, run_id, measure_id, report_id, channel,\n    destination_ref_hash, payload_sha256, payload_preview, status\n  )\n  select\n    concat('telegram:report:', p->>'reportId', ':', left(p->>'destinationRefHash', 16)),\n    (p->>'runId')::uuid,\n    null,\n    (p->>'reportId')::uuid,\n    'TELEGRAM',\n    p->>'destinationRefHash',\n    lower(p->>'payloadSha256'),\n    left(p->>'telegramMessage', 1000),\n    case when coalesce((p->>'telegramEnabled')::boolean, false)\n      then 'PENDING' else 'SKIPPED' end\n  from payload\n  on conflict (dedupe_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect n.*\nfrom public.lnd_notifications n, payload\nwhere n.dedupe_key = concat(\n  'telegram:report:', payload.p->>'reportId', ':',\n  left(payload.p->>'destinationRefHash', 16)\n)\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000114",
+      "name": "Queue Telegram Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        1580,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "30000000-0000-4000-8000-000000000002",
+              "leftValue": "={{ $('Report Config').first().json.telegramEnabled }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000115",
+      "name": "Report Telegram Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1820,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $('Report Config').first().json.telegramChatId }}",
+        "text": "={{ $('Prepare Report Notification').item.json.telegramMessage }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000116",
+      "name": "Send Telegram Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2060,
+        -20
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\nnotification_update as (\n  update public.lnd_notifications n\n  set\n    status = case when nullif(p->>'error', '') is null then 'SENT' else 'FAILED' end,\n    attempt_count = n.attempt_count + 1,\n    provider_message_id = nullif(p->>'providerMessageId', ''),\n    sent_at = case when nullif(p->>'error', '') is null then now() else n.sent_at end,\n    last_error = nullif(left(p->>'error', 1000), '')\n  from payload\n  where n.id = (p->>'notificationId')::uuid\n  returning n.*\n)\nupdate public.lnd_prematch_reports r\nset status = case\n  when exists (select 1 from notification_update n where n.status = 'SENT') then 'SENT'\n  else 'FAILED'\nend\nfrom payload\nwhere r.id = (p->>'reportId')::uuid\nreturning r.*;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ notificationId: $('Queue Telegram Report').item.json.id, reportId: $('Prepare Report Notification').item.json.reportId, providerMessageId: $json.result?.message_id || $json.message_id || '', error: $json.error?.message || $json.error || '' }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000117",
+      "name": "Update Report Delivery",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        2300,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p)\nupdate public.lnd_agent_runs r\nset\n  finished_at = now(),\n  status = case\n    when exists (\n      select 1 from public.lnd_notifications n\n      where n.run_id = r.id and n.status = 'FAILED'\n    ) then 'PARTIAL'\n    else 'SUCCEEDED'\n  end\nfrom payload\nwhere r.id = (p->>'runId')::uuid\nreturning r.*;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ runId: $('Open Report Run').first().json.id }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000118",
+      "name": "Finalize Report Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        2540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p)\nupdate public.lnd_agent_runs r\nset\n  finished_at = now(),\n  status = 'SKIPPED',\n  error_code = 'NO_UPCOMING_FIXTURE',\n  error_summary = 'Nessuna prossima fixture disponibile per il report.'\nfrom payload\nwhere r.id = (p->>'runId')::uuid\nreturning r.*;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ runId: $('Open Report Run').first().json.id }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000119",
+      "name": "Skip Report - No Fixture",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        380,
+        240
+      ]
+    }
+  ],
+  "connections": {
+    "Friday 20:05": {
+      "main": [
+        [
+          {
+            "node": "Report Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Report Test": {
+      "main": [
+        [
+          {
+            "node": "Report Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Config": {
+      "main": [
+        [
+          {
+            "node": "Open Report Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open Report Run": {
+      "main": [
+        [
+          {
+            "node": "Get Prematch Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Prematch Data": {
+      "main": [
+        [
+          {
+            "node": "Build Prematch Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prematch Report": {
+      "main": [
+        [
+          {
+            "node": "Has Upcoming Fixture?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Upcoming Fixture?": {
+      "main": [
+        [
+          {
+            "node": "SHA256 Report Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Report - No Fixture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SHA256 Report Content": {
+      "main": [
+        [
+          {
+            "node": "Insert Prematch Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Prematch Report": {
+      "main": [
+        [
+          {
+            "node": "Prepare Report Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Report Notification": {
+      "main": [
+        [
+          {
+            "node": "Hash Report Destination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Report Destination": {
+      "main": [
+        [
+          {
+            "node": "Hash Report Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Report Payload": {
+      "main": [
+        [
+          {
+            "node": "Queue Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Telegram Report": {
+      "main": [
+        [
+          {
+            "node": "Report Telegram Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Telegram Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finalize Report Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Report": {
+      "main": [
+        [
+          {
+            "node": "Update Report Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Report Delivery": {
+      "main": [
+        [
+          {
+            "node": "Finalize Report Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "versionId": "20000000-0000-4000-8000-000000000002",
+  "triggerCount": 0,
+  "tags": []
+}
+

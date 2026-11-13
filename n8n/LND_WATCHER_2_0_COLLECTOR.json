@@ -1,0 +1,1226 @@
+{
+  "name": "LND-WATCHER 2.0 - Collector Comunicati Veneto",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## LND-WATCHER 2.0 — Collector\n\nWorkflow importato **disattivato**.\n\nPrima del test:\n1. assegna la stessa credenziale PostgreSQL minima a tutti i nodi Postgres;\n2. assegna una credenziale OpenAI al nodo modello;\n3. sostituisci `REPLACE_WITH_TELEGRAM_CHAT_ID` nel nodo **Collector Config**;\n4. assegna la credenziale Telegram;\n5. lascia `telegramEnabled: false` durante lo shadow test;\n6. verifica il nodo PDF sulla tua versione n8n.\n\nIl workflow non marca mai automaticamente un provvedimento come `VERIFIED` e non aggiorna le tabelle Analytics.",
+        "height": 360,
+        "width": 760,
+        "color": 5
+      },
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "SETUP - LEGGERE PRIMA",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1180,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0,30 15-19 * * 1,3,5"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 0 20 * * 1,3,5"
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Schedule L-M-V 15-20",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1160,
+        40
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "00000000-0000-4000-8000-000000000003",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1160,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst config = {\n  workflowVersion: '2.0.0-phase1',\n  timezone: 'Europe/Rome',\n  seasonCode: '2026/27',\n  sourceKey: 'lnd-veneto-cr',\n  sourceName: 'Comitato Regionale Veneto - Comunicati Ufficiali',\n  sourceUrl: 'https://www.figcvenetocalcio.it/archivio-comunicati',\n  maxDocumentsPerRun: 3,\n  telegramEnabled: false,\n  telegramChatId: 'REPLACE_WITH_TELEGRAM_CHAT_ID'\n};\nif (config.telegramEnabled && config.telegramChatId.startsWith('REPLACE_')) {\n  throw new Error('Configura telegramChatId prima di abilitare Telegram.');\n}\nreturn [{ json: {\n  ...config,\n  scheduledFor: now.toISOString(),\n  runKey: 'lnd-watcher:' + now.toISOString().slice(0, 16)\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000004",
+      "name": "Collector Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -920,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p)\ninsert into public.lnd_sources (\n  source_key, name, source_type, base_url, official, active,\n  last_checked_at, verification_status\n)\nselect\n  p->>'sourceKey', p->>'sourceName', 'LISTING', p->>'sourceUrl',\n  true, true, now(), 'VERIFIED'\nfrom payload\non conflict (source_key) do update\nset name = excluded.name,\n    base_url = excluded.base_url,\n    active = true,\n    last_checked_at = now()\nreturning *;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000005",
+      "name": "Ensure Official Source",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        -680,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_agent_runs (\n    run_key, workflow_name, workflow_version, scheduled_for,\n    schedule_timezone, started_at, status, scope\n  )\n  select\n    p->>'runKey', 'LND-WATCHER 2.0', p->>'workflowVersion',\n    (p->>'scheduledFor')::timestamptz, p->>'timezone',\n    now(), 'RUNNING',\n    jsonb_build_object(\n      'season', p->>'seasonCode',\n      'source_id', p->>'sourceId',\n      'mode', 'COLLECTOR'\n    )\n  from payload\n  on conflict (run_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect r.*\nfrom public.lnd_agent_runs r, payload\nwhere r.run_key = payload.p->>'runKey'\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ ...$('Collector Config').first().json, sourceId: $json.id }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000006",
+      "name": "Open Agent Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        -440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with target_season as (\n  select id, code\n  from public.lnd_seasons\n  where code = $1\n),\nvillanovese as (\n  select id, team_key, official_name, verification_status\n  from public.lnd_teams\n  where team_key = 'it-veneto:asd-villanovese'\n),\nnext_three as (\n  select\n    f.id as fixture_id,\n    f.scheduled_date,\n    f.kickoff_time,\n    f.competition_id,\n    case when f.home_team_id = v.id then f.away_team_id else f.home_team_id end as opponent_team_id,\n    row_number() over (\n      order by f.scheduled_date, f.kickoff_time nulls last, f.id\n    ) as fixture_order\n  from public.lnd_fixtures f\n  join target_season s on s.id = f.season_id\n  cross join villanovese v\n  where v.id in (f.home_team_id, f.away_team_id)\n    and f.status in ('SCHEDULED', 'RESCHEDULED')\n    and f.scheduled_date >= (now() at time zone 'Europe/Rome')::date\n  order by f.scheduled_date, f.kickoff_time nulls last, f.id\n  limit 3\n),\nmonitor_set as (\n  select\n    0::bigint as monitor_order,\n    v.id as team_id,\n    v.team_key,\n    v.official_name,\n    v.verification_status,\n    null::uuid as fixture_id,\n    null::date as scheduled_date,\n    null::uuid as competition_id\n  from villanovese v\n  union all\n  select\n    n.fixture_order,\n    t.id,\n    t.team_key,\n    t.official_name,\n    t.verification_status,\n    n.fixture_id,\n    n.scheduled_date,\n    n.competition_id\n  from next_three n\n  join public.lnd_teams t on t.id = n.opponent_team_id\n)\nselect\n  s.id as season_id,\n  s.code as season_code,\n  coalesce((\n    select jsonb_agg(to_jsonb(ms) order by ms.monitor_order)\n    from monitor_set ms\n  ), '[]'::jsonb) as monitored_teams,\n  coalesce((\n    select jsonb_agg(jsonb_build_object(\n      'id', c.id,\n      'competition_key', c.competition_key,\n      'official_name', c.official_name,\n      'kind', c.kind,\n      'analytics_category', c.analytics_category,\n      'verification_status', c.verification_status\n    ) order by c.kind, c.official_name)\n    from public.lnd_competitions c\n    where c.season_id = s.id\n  ), '[]'::jsonb) as competitions\nfrom target_season s;",
+        "options": {
+          "queryReplacement": "={{ $('Collector Config').first().json.seasonCode }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000007",
+      "name": "Get Monitor Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        -200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const db = $input.first().json;\nconst config = $('Collector Config').first().json;\nconst run = $('Open Agent Run').first().json;\nconst source = $('Ensure Official Source').first().json;\nconst teams = Array.isArray(db.monitored_teams) ? db.monitored_teams : [];\nif (!db.season_id || teams.length !== 4) {\n  throw new Error('Contesto incompleto: attese Villanovese e tre avversarie.');\n}\nreturn [{ json: {\n  ...config,\n  runId: run.id,\n  sourceId: source.id,\n  seasonId: db.season_id,\n  monitoredTeams: teams,\n  competitions: Array.isArray(db.competitions) ? db.competitions : []\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000008",
+      "name": "Build Runtime Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.sourceUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml"
+            },
+            {
+              "name": "User-Agent",
+              "value": "LND-WATCHER/2.0 (+technical-monitoring)"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "html"
+            }
+          }
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000009",
+      "name": "Fetch LND Veneto Listing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        280,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = String($json.html || '');\nconst ctx = $('Build Runtime Context').first().json;\nconst byFile = new Map();\nconst linkPattern = /href\\s*=\\s*[\"']([^\"']*download\\.ashx\\?[^\"']+)[\"']/gi;\nlet match;\nwhile ((match = linkPattern.exec(html)) !== null) {\n  const href = match[1].replace(/&amp;/gi, '&');\n  let url;\n  try { url = new URL(href, ctx.sourceUrl); } catch { continue; }\n  const file = url.searchParams.get('file') || '';\n  const decoded = decodeURIComponent(file);\n  const name = decoded.split('/').pop() || '';\n  const bulletin = name.match(/^Com_(\\d+)\\.pdf$/i);\n  if (!bulletin) continue;\n  url.searchParams.set('act', 'download');\n  const number = Number(bulletin[1]);\n  byFile.set(decoded.toLowerCase(), {\n    bulletinNumber: String(number),\n    canonicalUrl: url.toString(),\n    sourceReference: decoded\n  });\n}\nconst candidates = [...byFile.values()]\n  .sort((a, b) => Number(b.bulletinNumber) - Number(a.bulletinNumber))\n  .slice(0, ctx.maxDocumentsPerRun);\nif (!candidates.length) {\n  return [{ json: { ...ctx, hasCandidate: false } }];\n}\nreturn candidates.map(candidate => ({\n  json: {\n    ...ctx,\n    ...candidate,\n    hasCandidate: true\n  }\n}));"
+      },
+      "id": "00000000-0000-4000-8000-000000000010",
+      "name": "Parse Regional Bulletins",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "10000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.hasCandidate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000011",
+      "name": "Has Bulletin Candidate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.canonicalUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/pdf"
+            },
+            {
+              "name": "User-Agent",
+              "value": "LND-WATCHER/2.0 (+technical-monitoring)"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000012",
+      "name": "Download PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1000,
+        20
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "type": "SHA256",
+        "dataPropertyName": "contentSha256",
+        "encoding": "hex"
+      },
+      "id": "00000000-0000-4000-8000-000000000013",
+      "name": "SHA256 PDF",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000014",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000015",
+      "name": "Merge Hash and Text",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1480,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = String(item.text || '');\nconst dateMatch = text.slice(0, 12000).match(/\\bDEL\\s+(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})\\b/i);\nconst publishedAt = dateMatch\n  ? new Date(Date.UTC(Number(dateMatch[3]), Number(dateMatch[2]) - 1, Number(dateMatch[1]), 12)).toISOString()\n  : '';\nlet sizeBytes = null;\ntry {\n  const rawSize = $('Download PDF').item.binary?.data?.fileSize;\n  if (typeof rawSize === 'number') sizeBytes = rawSize;\n  else if (typeof rawSize === 'string' && /^\\d+$/.test(rawSize)) sizeBytes = Number(rawSize);\n} catch {}\nreturn [{ json: {\n  ...item,\n  extractedText: text,\n  publishedAt,\n  sizeBytes\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000016",
+      "name": "Enrich PDF Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\nprevious as (\n  select d.id\n  from public.lnd_documents d, payload\n  where d.source_id = (p->>'sourceId')::uuid\n    and d.season_id = (p->>'seasonId')::uuid\n    and d.bulletin_number = p->>'bulletinNumber'\n    and d.content_sha256 <> lower(p->>'contentSha256')\n    and not exists (\n      select 1 from public.lnd_documents newer\n      where newer.replaces_document_id = d.id\n    )\n  order by d.created_at desc\n  limit 1\n),\ninserted as (\n  insert into public.lnd_documents (\n    document_key, source_id, season_id, competition_id, document_type,\n    bulletin_number, published_at, canonical_url, content_sha256,\n    size_bytes, mime_type, replaces_document_id, discovered_run_id,\n    extraction_status, extracted_text_sha256, verification_status\n  )\n  select\n    concat(\n      p->>'sourceKey', ':',\n      replace(p->>'seasonCode', '/', '-'), ':cu:',\n      p->>'bulletinNumber', ':',\n      left(lower(p->>'contentSha256'), 16)\n    ),\n    (p->>'sourceId')::uuid,\n    (p->>'seasonId')::uuid,\n    null,\n    case when previous.id is null then 'OFFICIAL_BULLETIN' else 'RECTIFICATION' end,\n    p->>'bulletinNumber',\n    nullif(p->>'publishedAt', '')::timestamptz,\n    p->>'canonicalUrl',\n    lower(p->>'contentSha256'),\n    nullif(p->>'sizeBytes', '')::bigint,\n    'application/pdf',\n    previous.id,\n    (p->>'runId')::uuid,\n    'TEXT',\n    null,\n    'PARSED'\n  from payload\n  left join previous on true\n  on conflict (content_sha256) do nothing\n  returning *, true as is_new\n)\nselect * from inserted\nunion all\nselect d.*, false as is_new\nfrom public.lnd_documents d, payload\nwhere d.content_sha256 = lower(payload.p->>'contentSha256')\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ sourceKey: $json.sourceKey, seasonCode: $json.seasonCode, sourceId: $json.sourceId, seasonId: $json.seasonId, bulletinNumber: $json.bulletinNumber, publishedAt: $json.publishedAt || '', canonicalUrl: $json.canonicalUrl, contentSha256: $json.contentSha256, sizeBytes: $json.sizeBytes ?? '', runId: $json.runId }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000017",
+      "name": "Register Document",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        1960,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "10000000-0000-4000-8000-000000000002",
+              "leftValue": "={{ $json.is_new }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000018",
+      "name": "Is New Document?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const document = $input.first().json;\nconst meta = $('Enrich PDF Metadata').item.json;\nconst ctx = $('Build Runtime Context').first().json;\nconst text = String(meta.extractedText || '');\nconst fold = value => String(value || '')\n  .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .toUpperCase();\nconst foldedText = fold(text);\nconst ranges = [];\nfor (const team of ctx.monitoredTeams) {\n  const term = fold(team.official_name);\n  let from = 0;\n  while (term && (from = foldedText.indexOf(term, from)) !== -1) {\n    ranges.push([Math.max(0, from - 2200), Math.min(text.length, from + term.length + 3200)]);\n    from += term.length;\n    if (ranges.length >= 20) break;\n  }\n}\nranges.sort((a, b) => a[0] - b[0]);\nconst merged = [];\nfor (const range of ranges) {\n  const last = merged[merged.length - 1];\n  if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);\n  else merged.push([...range]);\n}\nconst excerpts = merged.map(([start, end]) => text.slice(start, end)).join('\\n\\n--- ESTRATTO ---\\n\\n').slice(0, 30000);\nconst teamList = ctx.monitoredTeams.map(t => ({\n  id: t.team_id,\n  name: t.official_name\n}));\nconst competitionList = ctx.competitions.map(c => ({\n  id: c.id,\n  name: c.official_name,\n  kind: c.kind,\n  verification_status: c.verification_status\n}));\nconst hasRelevantMentions = excerpts.trim().length > 0;\nconst aiPrompt = [\n  'Analizza esclusivamente gli estratti del Comunicato Ufficiale LND Veneto forniti.',\n  'Non usare conoscenza esterna e non inventare identità, competizioni, date o giornate.',\n  'Cerca solo provvedimenti riferibili alle squadre monitorate.',\n  'Non equiparare ammonizioni, diffide e giornate residue.',\n  'Non classificare mai un dato come VERIFIED: usa PARSED, AMBIGUOUS o NON_VERIFICABILE.',\n  'Se la competizione non è esplicita usa competition_kind NON_VERIFICABILE.',\n  'Per page_number usa 0 quando la pagina non è ricavabile.',\n  'Per campi sconosciuti usa stringa vuota o 0 come previsto dallo schema.',\n  '',\n  'SQUADRE MONITORATE:',\n  JSON.stringify(teamList),\n  '',\n  'COMPETIZIONI DISPONIBILI NEL DATABASE:',\n  JSON.stringify(competitionList),\n  '',\n  'COMUNICATO: ' + meta.canonicalUrl,\n  'NUMERO: ' + meta.bulletinNumber,\n  '',\n  'ESTRATTI:',\n  excerpts\n].join('\\n');\nreturn [{ json: {\n  documentId: document.id,\n  canonicalUrl: document.canonical_url,\n  bulletinNumber: document.bulletin_number,\n  runId: ctx.runId,\n  sourceId: ctx.sourceId,\n  seasonId: ctx.seasonId,\n  monitoredTeams: ctx.monitoredTeams,\n  competitions: ctx.competitions,\n  hasRelevantMentions,\n  aiPrompt\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000019",
+      "name": "Build Relevant Excerpts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "10000000-0000-4000-8000-000000000003",
+              "leftValue": "={{ $json.hasRelevantMentions }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000020",
+      "name": "Has Relevant Mentions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2680,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.aiPrompt }}",
+        "hasOutputParser": true,
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000021",
+      "name": "AI Discipline Extraction",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        2920,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000022",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2880,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"measures\",\n    \"notes\"\n  ],\n  \"properties\": {\n    \"measures\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"page_number\",\n          \"raw_team_name\",\n          \"raw_person_name\",\n          \"competition_kind\",\n          \"measure_type\",\n          \"quantity\",\n          \"unit\",\n          \"gamedays\",\n          \"effective_from\",\n          \"source_excerpt\",\n          \"confidence\",\n          \"verification_status\"\n        ],\n        \"properties\": {\n          \"page_number\": {\n            \"type\": \"integer\",\n            \"minimum\": 0\n          },\n          \"raw_team_name\": {\n            \"type\": \"string\"\n          },\n          \"raw_person_name\": {\n            \"type\": \"string\"\n          },\n          \"competition_kind\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"LEAGUE\",\n              \"COPPA_VENETO\",\n              \"OTHER\",\n              \"NON_VERIFICABILE\"\n            ]\n          },\n          \"measure_type\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"WARNING\",\n              \"DIFFIDA\",\n              \"SUSPENSION\",\n              \"EXPULSION\",\n              \"FINE\",\n              \"OTHER\"\n            ]\n          },\n          \"quantity\": {\n            \"type\": \"number\",\n            \"minimum\": 0\n          },\n          \"unit\": {\n            \"type\": \"string\"\n          },\n          \"gamedays\": {\n            \"type\": \"integer\",\n            \"minimum\": 0\n          },\n          \"effective_from\": {\n            \"type\": \"string\"\n          },\n          \"source_excerpt\": {\n            \"type\": \"string\"\n          },\n          \"confidence\": {\n            \"type\": \"number\",\n            \"minimum\": 0,\n            \"maximum\": 1\n          },\n          \"verification_status\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"PARSED\",\n              \"AMBIGUOUS\",\n              \"NON_VERIFICABILE\"\n            ]\n          }\n        }\n      }\n    },\n    \"notes\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  }\n}",
+        "autoFix": false
+      },
+      "id": "00000000-0000-4000-8000-000000000023",
+      "name": "Structured Measure Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        3100,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Build Relevant Excerpts').item.json;\nlet output = $json.output ?? $json;\nif (typeof output === 'string') {\n  try { output = JSON.parse(output); } catch { output = { measures: [], notes: ['JSON AI non valido'] }; }\n}\nconst normalize = value => String(value || '')\n  .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .replace(/[^a-zA-Z0-9]+/g, ' ').trim().toUpperCase();\nconst allowedTypes = new Set(['WARNING','DIFFIDA','SUSPENSION','EXPULSION','FINE','OTHER']);\nconst allowedStatuses = new Set(['PARSED','AMBIGUOUS','NON_VERIFICABILE']);\nconst rawMeasures = Array.isArray(output.measures) ? output.measures : [];\nconst accepted = [];\nlet unresolvedCompetition = false;\nfor (const measure of rawMeasures) {\n  if (!allowedTypes.has(measure.measure_type)) continue;\n  if (!String(measure.source_excerpt || '').trim()) continue;\n  const team = context.monitoredTeams.find(t =>\n    normalize(t.official_name) === normalize(measure.raw_team_name)\n  );\n  const matchingCompetitions = context.competitions.filter(c =>\n    c.kind === measure.competition_kind\n  );\n  const competition = matchingCompetitions.length === 1 ? matchingCompetitions[0] : null;\n  if (!competition) {\n    unresolvedCompetition = true;\n    continue;\n  }\n  let verificationStatus = allowedStatuses.has(measure.verification_status)\n    ? measure.verification_status\n    : 'NON_VERIFICABILE';\n  if (!team && verificationStatus === 'PARSED') verificationStatus = 'AMBIGUOUS';\n  const row = {\n    hasMeasure: true,\n    documentId: context.documentId,\n    runId: context.runId,\n    sourceId: context.sourceId,\n    seasonId: context.seasonId,\n    competitionId: competition.id,\n    teamId: team?.team_id || null,\n    personId: null,\n    pageNumber: Number(measure.page_number) > 0 ? Number(measure.page_number) : null,\n    sourceExcerpt: String(measure.source_excerpt).slice(0, 4000),\n    rawTeamName: String(measure.raw_team_name || '').slice(0, 300) || null,\n    rawPersonName: String(measure.raw_person_name || '').slice(0, 300) || null,\n    measureType: measure.measure_type,\n    quantity: Number(measure.quantity) > 0 ? Number(measure.quantity) : null,\n    unit: String(measure.unit || '').slice(0, 80) || null,\n    gamedays: Number(measure.gamedays) > 0 ? Number(measure.gamedays) : null,\n    effectiveFrom: /^\\d{4}-\\d{2}-\\d{2}$/.test(String(measure.effective_from || ''))\n      ? measure.effective_from\n      : null,\n    verificationStatus,\n    confidence: Math.max(0, Math.min(1, Number(measure.confidence) || 0)),\n    canonicalUrl: context.canonicalUrl,\n    bulletinNumber: context.bulletinNumber,\n    telegramEnabled: $('Collector Config').first().json.telegramEnabled,\n    telegramChatId: $('Collector Config').first().json.telegramChatId\n  };\n  row.measureFingerprintInput = JSON.stringify({\n    documentId: row.documentId,\n    pageNumber: row.pageNumber,\n    team: normalize(row.rawTeamName),\n    person: normalize(row.rawPersonName),\n    type: row.measureType,\n    gamedays: row.gamedays,\n    excerpt: normalize(row.sourceExcerpt)\n  });\n  accepted.push({ json: row });\n}\nif (accepted.length) return accepted;\nreturn [{ json: {\n  hasMeasure: false,\n  documentId: context.documentId,\n  runId: context.runId,\n  sourceId: context.sourceId,\n  verificationResult: unresolvedCompetition ? 'AMBIGUOUS' : 'NOT_FOUND',\n  evidence: {\n    reason: unresolvedCompetition\n      ? 'COMPETIZIONE_NON_MAPPATA_UNIVOCAMENTE'\n      : 'NESSUN_PROVVEDIMENTO_RILEVANTE',\n    ai_notes: Array.isArray(output.notes) ? output.notes : []\n  }\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000024",
+      "name": "Validate AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3160,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "10000000-0000-4000-8000-000000000004",
+              "leftValue": "={{ $json.hasMeasure }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000025",
+      "name": "Has Valid Measures?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3400,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "binaryData": false,
+        "value": "={{ $json.measureFingerprintInput }}",
+        "type": "SHA256",
+        "dataPropertyName": "measureHash",
+        "encoding": "hex"
+      },
+      "id": "00000000-0000-4000-8000-000000000026",
+      "name": "SHA256 Measure Fingerprint",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        3640,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_disciplinary_measures (\n    idempotency_key, document_id, page_number, source_excerpt,\n    season_id, competition_id, team_id, person_id,\n    raw_team_name, raw_person_name, measure_type, quantity, unit,\n    gamedays, effective_from, verification_status, confidence\n  )\n  select\n    concat('lnd-measure:', lower(p->>'measureHash')),\n    (p->>'documentId')::uuid,\n    nullif(p->>'pageNumber', '')::integer,\n    p->>'sourceExcerpt',\n    (p->>'seasonId')::uuid,\n    (p->>'competitionId')::uuid,\n    nullif(p->>'teamId', '')::uuid,\n    null,\n    nullif(p->>'rawTeamName', ''),\n    nullif(p->>'rawPersonName', ''),\n    p->>'measureType',\n    nullif(p->>'quantity', '')::numeric,\n    nullif(p->>'unit', ''),\n    nullif(p->>'gamedays', '')::integer,\n    nullif(p->>'effectiveFrom', '')::date,\n    p->>'verificationStatus',\n    nullif(p->>'confidence', '')::numeric\n  from payload\n  on conflict (idempotency_key) do nothing\n  returning *, true as is_new\n)\nselect * from inserted\nunion all\nselect dm.*, false as is_new\nfrom public.lnd_disciplinary_measures dm, payload\nwhere dm.idempotency_key = concat('lnd-measure:', lower(payload.p->>'measureHash'))\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ ...$json, pageNumber: $json.pageNumber ?? '', teamId: $json.teamId ?? '', quantity: $json.quantity ?? '', unit: $json.unit ?? '', gamedays: $json.gamedays ?? '', effectiveFrom: $json.effectiveFrom ?? '', confidence: $json.confidence ?? '' }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000027",
+      "name": "Insert Measure Idempotently",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        3880,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_verifications (\n    verification_key, run_id, source_id, document_id, team_id,\n    result, evidence, checked_at\n  )\n  select\n    concat('verify:', p->>'runId', ':measure:', p->>'measureId'),\n    (p->>'runId')::uuid,\n    (p->>'sourceId')::uuid,\n    (p->>'documentId')::uuid,\n    nullif(p->>'teamId', '')::uuid,\n    case when (p->>'isNew')::boolean then 'NEW' else 'UNCHANGED' end,\n    jsonb_build_object(\n      'measure_id', p->>'measureId',\n      'measure_type', p->>'measureType',\n      'verification_status', p->>'verificationStatus'\n    ),\n    now()\n  from payload\n  on conflict (verification_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect v.*\nfrom public.lnd_verifications v, payload\nwhere v.verification_key = concat('verify:', payload.p->>'runId', ':measure:', payload.p->>'measureId')\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ runId: $('Build Runtime Context').first().json.runId, sourceId: $('Build Runtime Context').first().json.sourceId, documentId: $json.document_id, teamId: $json.team_id || '', measureId: $json.id, measureType: $json.measure_type, verificationStatus: $json.verification_status, isNew: $json.is_new }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000028",
+      "name": "Record Measure Verification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        4120,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const measure = $('Insert Measure Idempotently').item.json;\nconst cfg = $('Collector Config').first().json;\nconst team = measure.raw_team_name || 'Squadra non attribuita';\nconst person = measure.raw_person_name || 'Tesserato non attribuito';\nconst days = measure.gamedays ? '\\nGiornate indicate: ' + measure.gamedays : '';\nconst message = [\n  '⚽ LND-WATCHER 2.0 — nuovo elemento da verificare',\n  '',\n  'C.U. ' + ($('Build Relevant Excerpts').item.json.bulletinNumber || '?'),\n  'Squadra: ' + team,\n  'Tesserato: ' + person,\n  'Tipo: ' + measure.measure_type + days,\n  'Stato: ' + measure.verification_status,\n  '',\n  'Il dato non è ancora VERIFIED e non equivale automaticamente a giornate residue.',\n  $('Build Relevant Excerpts').item.json.canonicalUrl\n].join('\\n').slice(0, 4000);\nreturn [{ json: {\n  runId: $('Build Runtime Context').first().json.runId,\n  measureId: measure.id,\n  telegramEnabled: cfg.telegramEnabled,\n  telegramChatId: cfg.telegramChatId,\n  telegramMessage: message\n}}];"
+      },
+      "id": "00000000-0000-4000-8000-000000000029",
+      "name": "Format Measure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4360,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "binaryData": false,
+        "value": "={{ $json.telegramChatId }}",
+        "type": "SHA256",
+        "dataPropertyName": "destinationRefHash",
+        "encoding": "hex"
+      },
+      "id": "00000000-0000-4000-8000-000000000030",
+      "name": "Hash Telegram Destination",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        4600,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "binaryData": false,
+        "value": "={{ $json.telegramMessage }}",
+        "type": "SHA256",
+        "dataPropertyName": "payloadSha256",
+        "encoding": "hex"
+      },
+      "id": "00000000-0000-4000-8000-000000000031",
+      "name": "Hash Telegram Payload",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        4840,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_notifications (\n    dedupe_key, run_id, measure_id, report_id, channel,\n    destination_ref_hash, payload_sha256, payload_preview, status\n  )\n  select\n    concat('telegram:measure:', p->>'measureId', ':', left(p->>'destinationRefHash', 16)),\n    (p->>'runId')::uuid,\n    (p->>'measureId')::uuid,\n    null,\n    'TELEGRAM',\n    p->>'destinationRefHash',\n    lower(p->>'payloadSha256'),\n    left(p->>'telegramMessage', 1000),\n    case when coalesce((p->>'telegramEnabled')::boolean, false)\n      then 'PENDING' else 'SKIPPED' end\n  from payload\n  on conflict (dedupe_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect n.*\nfrom public.lnd_notifications n, payload\nwhere n.dedupe_key = concat(\n  'telegram:measure:', payload.p->>'measureId', ':',\n  left(payload.p->>'destinationRefHash', 16)\n)\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000032",
+      "name": "Queue Telegram Measure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        5080,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "10000000-0000-4000-8000-000000000005",
+              "leftValue": "={{ $('Collector Config').first().json.telegramEnabled }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000033",
+      "name": "Telegram Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5320,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $('Collector Config').first().json.telegramChatId }}",
+        "text": "={{ $('Format Measure Alert').item.json.telegramMessage }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000034",
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5560,
+        -300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p)\nupdate public.lnd_notifications n\nset\n  status = case when nullif(p->>'error', '') is null then 'SENT' else 'FAILED' end,\n  attempt_count = n.attempt_count + 1,\n  provider_message_id = nullif(p->>'providerMessageId', ''),\n  sent_at = case when nullif(p->>'error', '') is null then now() else n.sent_at end,\n  last_error = nullif(left(p->>'error', 1000), '')\nfrom payload\nwhere n.id = (p->>'notificationId')::uuid\nreturning n.*;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ notificationId: $('Queue Telegram Measure').item.json.id, providerMessageId: $json.result?.message_id || $json.message_id || '', error: $json.error?.message || $json.error || '' }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000035",
+      "name": "Update Notification Result",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        5800,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_verifications (\n    verification_key, run_id, source_id, document_id,\n    result, evidence, checked_at\n  )\n  select\n    concat('verify:', p->>'runId', ':document:', p->>'documentId'),\n    (p->>'runId')::uuid,\n    (p->>'sourceId')::uuid,\n    (p->>'documentId')::uuid,\n    case\n      when p->>'result' in ('NOT_FOUND', 'AMBIGUOUS') then p->>'result'\n      else 'NOT_FOUND'\n    end,\n    coalesce(p->'evidence', '{}'::jsonb),\n    now()\n  from payload\n  on conflict (verification_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect v.*\nfrom public.lnd_verifications v, payload\nwhere v.verification_key = concat(\n  'verify:', payload.p->>'runId', ':document:', payload.p->>'documentId'\n)\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ runId: $json.runId || $('Build Runtime Context').first().json.runId, sourceId: $json.sourceId || $('Build Runtime Context').first().json.sourceId, documentId: $json.documentId || $('Register Document').item.json.id, result: $json.verificationResult || 'NOT_FOUND', evidence: $json.evidence || { reason: 'NESSUNA_MENZIONE_RILEVANTE' } }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000036",
+      "name": "Record No Finding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        3640,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\ninserted as (\n  insert into public.lnd_verifications (\n    verification_key, run_id, source_id, document_id,\n    result, evidence, checked_at\n  )\n  select\n    concat('verify:', p->>'runId', ':document:', p->>'documentId'),\n    (p->>'runId')::uuid,\n    (p->>'sourceId')::uuid,\n    (p->>'documentId')::uuid,\n    'UNCHANGED',\n    jsonb_build_object('content_sha256', p->>'contentSha256'),\n    now()\n  from payload\n  on conflict (verification_key) do nothing\n  returning *\n)\nselect * from inserted\nunion all\nselect v.*\nfrom public.lnd_verifications v, payload\nwhere v.verification_key = concat(\n  'verify:', payload.p->>'runId', ':document:', payload.p->>'documentId'\n)\n  and not exists (select 1 from inserted)\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ runId: $('Build Runtime Context').first().json.runId, sourceId: $('Build Runtime Context').first().json.sourceId, documentId: $json.id, contentSha256: $json.content_sha256 }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000037",
+      "name": "Record Unchanged Document",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        2440,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\nsource_update as (\n  update public.lnd_sources s\n  set last_success_at = now(), last_checked_at = now()\n  from payload\n  where s.id = (p->>'sourceId')::uuid\n  returning s.id\n),\ncounts as (\n  select\n    (select count(*) from public.lnd_verifications v, payload\n      where v.run_id = (payload.p->>'runId')::uuid) as documents_seen,\n    (select count(*) from public.lnd_documents d, payload\n      where d.discovered_run_id = (payload.p->>'runId')::uuid) as documents_new,\n    (select count(*)\n      from public.lnd_disciplinary_measures dm\n      join public.lnd_documents d on d.id = dm.document_id,\n      payload\n      where d.discovered_run_id = (payload.p->>'runId')::uuid) as measures_new,\n    exists (\n      select 1 from public.lnd_notifications n, payload\n      where n.run_id = (payload.p->>'runId')::uuid\n        and n.status = 'FAILED'\n    ) as has_failed_notification\n)\nupdate public.lnd_agent_runs r\nset\n  finished_at = now(),\n  status = case when counts.has_failed_notification then 'PARTIAL' else 'SUCCEEDED' end,\n  documents_seen = counts.documents_seen,\n  documents_new = counts.documents_new,\n  measures_new = counts.measures_new\nfrom counts, payload\nwhere r.id = (payload.p->>'runId')::uuid\nreturning r.*;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ runId: $('Build Runtime Context').first().json.runId, sourceId: $('Build Runtime Context').first().json.sourceId }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000038",
+      "name": "Finalize Collector Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        6040,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p)\nupdate public.lnd_agent_runs r\nset\n  finished_at = now(),\n  status = 'PARTIAL',\n  error_code = 'NO_REGIONAL_BULLETIN_LINKS',\n  error_summary = 'La pagina ufficiale non ha prodotto link Com_N.pdf riconoscibili.'\nfrom payload\nwhere r.id = (p->>'runId')::uuid\nreturning r.*;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ runId: $('Build Runtime Context').first().json.runId }) }}"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000039",
+      "name": "Finalize Source Unavailable",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        1000,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule L-M-V 15-20": {
+      "main": [
+        [
+          {
+            "node": "Collector Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Test": {
+      "main": [
+        [
+          {
+            "node": "Collector Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collector Config": {
+      "main": [
+        [
+          {
+            "node": "Ensure Official Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Official Source": {
+      "main": [
+        [
+          {
+            "node": "Open Agent Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open Agent Run": {
+      "main": [
+        [
+          {
+            "node": "Get Monitor Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Monitor Context": {
+      "main": [
+        [
+          {
+            "node": "Build Runtime Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Runtime Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch LND Veneto Listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch LND Veneto Listing": {
+      "main": [
+        [
+          {
+            "node": "Parse Regional Bulletins",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Regional Bulletins": {
+      "main": [
+        [
+          {
+            "node": "Has Bulletin Candidate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Bulletin Candidate?": {
+      "main": [
+        [
+          {
+            "node": "Download PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finalize Source Unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF": {
+      "main": [
+        [
+          {
+            "node": "SHA256 PDF",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SHA256 PDF": {
+      "main": [
+        [
+          {
+            "node": "Merge Hash and Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Merge Hash and Text",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Hash and Text": {
+      "main": [
+        [
+          {
+            "node": "Enrich PDF Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich PDF Metadata": {
+      "main": [
+        [
+          {
+            "node": "Register Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Document": {
+      "main": [
+        [
+          {
+            "node": "Is New Document?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Document?": {
+      "main": [
+        [
+          {
+            "node": "Build Relevant Excerpts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Unchanged Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Relevant Excerpts": {
+      "main": [
+        [
+          {
+            "node": "Has Relevant Mentions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Relevant Mentions?": {
+      "main": [
+        [
+          {
+            "node": "AI Discipline Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record No Finding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "main": [
+        [
+          {
+            "node": "AI Discipline Extraction",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Measure Parser": {
+      "main": [
+        [
+          {
+            "node": "AI Discipline Extraction",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Discipline Extraction": {
+      "main": [
+        [
+          {
+            "node": "Validate AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate AI Output": {
+      "main": [
+        [
+          {
+            "node": "Has Valid Measures?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Valid Measures?": {
+      "main": [
+        [
+          {
+            "node": "SHA256 Measure Fingerprint",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record No Finding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SHA256 Measure Fingerprint": {
+      "main": [
+        [
+          {
+            "node": "Insert Measure Idempotently",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Measure Idempotently": {
+      "main": [
+        [
+          {
+            "node": "Record Measure Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Measure Verification": {
+      "main": [
+        [
+          {
+            "node": "Format Measure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Measure Alert": {
+      "main": [
+        [
+          {
+            "node": "Hash Telegram Destination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Telegram Destination": {
+      "main": [
+        [
+          {
+            "node": "Hash Telegram Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Telegram Payload": {
+      "main": [
+        [
+          {
+            "node": "Queue Telegram Measure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Telegram Measure": {
+      "main": [
+        [
+          {
+            "node": "Telegram Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finalize Collector Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "Update Notification Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Notification Result": {
+      "main": [
+        [
+          {
+            "node": "Finalize Collector Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record No Finding": {
+      "main": [
+        [
+          {
+            "node": "Finalize Collector Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Unchanged Document": {
+      "main": [
+        [
+          {
+            "node": "Finalize Collector Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "versionId": "20000000-0000-4000-8000-000000000001",
+  "triggerCount": 0,
+  "tags": []
+}
+
