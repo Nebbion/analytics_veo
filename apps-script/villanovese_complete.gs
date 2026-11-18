@@ -4169,7 +4169,7 @@ function sincronizzaSupabaseIncrementale() {
   }
 
   // ==========================================
-  // MATCHES - solo mancanti
+  // MATCHES - inserisce i nuovi e aggiorna quelli già presenti
   // ==========================================
 
   const matchesMap = {};
@@ -4178,17 +4178,7 @@ function sincronizzaSupabaseIncrementale() {
     const matchId = String(row.Match_ID || '').trim();
     if (!matchId) return;
 
-    let data = row.Data;
-
-    if (data instanceof Date) {
-      data = Utilities.formatDate(
-        data,
-        Session.getScriptTimeZone(),
-        'yyyy-MM-dd'
-      );
-    } else if (data) {
-      data = String(data).substring(0, 10);
-    }
+    const data = normalizzaDataSupabase_(row.Data);
 
     matchesMap[matchId] = {
       match_id: matchId,
@@ -4211,12 +4201,15 @@ function sincronizzaSupabaseIncrementale() {
   const nuoviMatches = Object.values(matchesMap)
     .filter(row => !remoteMatchIds.has(row.match_id));
 
-  if (nuoviMatches.length) {
-    supabaseInsert_(
+  const matches = Object.values(matchesMap);
+
+  if (matches.length) {
+    supabaseUpsert_(
       supabaseUrl,
       supabaseKey,
       'matches',
-      nuoviMatches
+      matches,
+      'match_id'
     );
   }
 
@@ -4748,17 +4741,7 @@ function sincronizzaSupabase() {
 
     if (!matchId) return;
 
-    let data = row.Data;
-
-    if (data instanceof Date) {
-      data = Utilities.formatDate(
-        data,
-        Session.getScriptTimeZone(),
-        'yyyy-MM-dd'
-      );
-    } else if (data) {
-      data = String(data).substring(0, 10);
-    }
+    const data = normalizzaDataSupabase_(row.Data);
 
     matchesMap[matchId] = {
       match_id: matchId,
@@ -6643,6 +6626,38 @@ function normalizzaNomeYouCoach_(nome) {
     .sort()
     .join(' ');
 
+}
+
+
+function normalizzaDataSupabase_(data) {
+
+  if (data instanceof Date && !isNaN(data.getTime())) {
+    return Utilities.formatDate(
+      data,
+      Session.getScriptTimeZone(),
+      'yyyy-MM-dd'
+    );
+  }
+
+  const valore = String(data || '').trim();
+
+  if (!valore) return null;
+
+  const iso = valore.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+  if (iso) {
+    return iso[1] + '-' + iso[2] + '-' + iso[3];
+  }
+
+  const italiana = valore.match(
+    /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})/
+  );
+
+  if (!italiana) return null;
+
+  return italiana[3] + '-' +
+    String(italiana[2]).padStart(2, '0') + '-' +
+    String(italiana[1]).padStart(2, '0');
 }
 
 

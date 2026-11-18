@@ -6,9 +6,37 @@ import { championshipCalendar, type ChampionshipCalendarLeg } from '../lib/champ
 type CalendarMatch = {
   matchId: string;
   date: string;
+  match: string;
   competition: 'CAMPIONATO' | 'COPPA';
   result: string;
   outcome: 'V' | 'N' | 'P' | null;
+};
+
+const fixtureKey = (leg: ChampionshipCalendarLeg, matchday: number) => `${leg}-${matchday}`;
+
+const normalizedDate = (value: string) => {
+  const date = String(value || '').trim();
+  const iso = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  const italian = date.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
+  if (!italian) return '';
+  return `${italian[3]}-${italian[2].padStart(2, '0')}-${italian[1].padStart(2, '0')}`;
+};
+
+const normalizedName = (value: string) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-zA-Z0-9]+/g, ' ')
+  .trim()
+  .toLowerCase();
+
+const dateDistance = (first: string, second: string) => {
+  const firstTime = Date.parse(`${first}T12:00:00Z`);
+  const secondTime = Date.parse(`${second}T12:00:00Z`);
+  return Number.isFinite(firstTime) && Number.isFinite(secondTime)
+    ? Math.abs(firstTime - secondTime) / 86_400_000
+    : Number.POSITIVE_INFINITY;
 };
 
 const dateLabel = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('it-IT', {
@@ -22,14 +50,33 @@ export function ChampionshipCalendar({ matches }: { matches: CalendarMatch[] }) 
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const [leg, setLeg] = useState<ChampionshipCalendarLeg>(today > '2026-12-20' ? 'RITORNO' : 'ANDATA');
-  const playedByDate = useMemo(() => new Map(
-    matches
-      .filter(match => match.competition === 'CAMPIONATO')
-      .map(match => [match.date, match]),
-  ), [matches]);
+  const playedByFixture = useMemo(() => {
+    const championshipMatches = matches.filter(match => match.competition === 'CAMPIONATO');
+    const resolved = new Map<string, CalendarMatch>();
+    const usedMatchIds = new Set<string>();
+
+    championshipCalendar.forEach(fixture => {
+      const available = championshipMatches.filter(match => !usedMatchIds.has(match.matchId));
+      const exactDate = available.find(match => normalizedDate(match.date) === fixture.date);
+      const opponent = normalizedName(fixture.opponent);
+      const matchingOpponent = available
+        .filter(match => normalizedName(match.match).includes(opponent))
+        .map(match => ({ match, distance: dateDistance(normalizedDate(match.date), fixture.date) }))
+        .filter(candidate => candidate.distance <= 7)
+        .sort((a, b) => a.distance - b.distance)[0]?.match;
+      const playedMatch = exactDate ?? matchingOpponent;
+
+      if (playedMatch) {
+        resolved.set(fixtureKey(fixture.leg, fixture.matchday), playedMatch);
+        usedMatchIds.add(playedMatch.matchId);
+      }
+    });
+
+    return resolved;
+  }, [matches]);
   const fixtures = championshipCalendar.filter(fixture => fixture.leg === leg);
   const nextFixture = championshipCalendar
-    .filter(fixture => !playedByDate.has(fixture.date) && fixture.date >= today)
+    .filter(fixture => !playedByFixture.has(fixtureKey(fixture.leg, fixture.matchday)) && fixture.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
 
   return <section className="panel tablePanel championshipCalendarPanel">
@@ -43,7 +90,7 @@ export function ChampionshipCalendar({ matches }: { matches: CalendarMatch[] }) 
 
     <div className="championshipCalendarRows">
       {fixtures.map(fixture => {
-        const playedMatch = playedByDate.get(fixture.date);
+        const playedMatch = playedByFixture.get(fixtureKey(fixture.leg, fixture.matchday));
         const isNext = fixture === nextFixture;
 
         return <div className={`championshipCalendarRow ${isNext ? 'nextFixture' : ''}`} key={`${fixture.leg}-${fixture.matchday}`}>
