@@ -7544,7 +7544,7 @@ function salvaYouCoachLineupsESostituzioni_(
         : '';
 
     const goalType =
-      eventType === 'GOAL'
+      eventType === 'GOAL' || eventType === 'OPPONENT_GOAL'
         ? youCoachGoalType_(evento)
         : '';
 

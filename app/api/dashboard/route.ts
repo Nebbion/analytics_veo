@@ -50,6 +50,8 @@ type LineupRow = {
 
 type SubstitutionRow = {
   match_id: string;
+  minuto: number;
+  recupero: boolean;
   player_out_id: string;
   player_in_id: string;
 };
@@ -141,6 +143,166 @@ const villanoveseScore = (row: MatchRow) => {
     teamGoals,
     opponentGoals,
     outcome: (teamGoals > opponentGoals ? 'V' : teamGoals < opponentGoals ? 'P' : 'N') as 'V' | 'N' | 'P',
+  };
+};
+
+type GoalkeeperMatchStat = {
+  matchId: string;
+  date: string;
+  match: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  result: string;
+  playerId: string;
+  playerName: string;
+  started: boolean;
+  teamGoalsConceded: number;
+  goalsConceded: number;
+  penaltyGoalsConceded: number;
+  freeKickGoalsConceded: number;
+  cleanSheet: boolean;
+};
+
+const buildGoalkeeperStats = (
+  matches: MatchRow[],
+  lineups: LineupRow[],
+  substitutions: SubstitutionRow[],
+  officialEvents: OfficialEventRow[],
+  playerNameMap: Map<string, string>
+) => {
+  const lineupsByMatch = new Map<string, LineupRow[]>();
+  const substitutionsByMatch = new Map<string, SubstitutionRow[]>();
+  const opponentGoalsByMatch = new Map<string, OfficialEventRow[]>();
+
+  lineups.forEach(row => {
+    const rows = lineupsByMatch.get(row.match_id) ?? [];
+    rows.push(row);
+    lineupsByMatch.set(row.match_id, rows);
+  });
+
+  substitutions.forEach(row => {
+    const rows = substitutionsByMatch.get(row.match_id) ?? [];
+    rows.push(row);
+    substitutionsByMatch.set(row.match_id, rows);
+  });
+
+  officialEvents.forEach(row => {
+    if (row.event_type !== 'OPPONENT_GOAL') return;
+    const rows = opponentGoalsByMatch.get(row.match_id) ?? [];
+    rows.push(row);
+    opponentGoalsByMatch.set(row.match_id, rows);
+  });
+
+  const matchStats: GoalkeeperMatchStat[] = [];
+  const unattributedGoals = { total: 0, campionato: 0, coppa: 0 };
+
+  const addUnattributedGoals = (count: number, competition: 'CAMPIONATO' | 'COPPA') => {
+    unattributedGoals.total += count;
+    if (competition === 'COPPA') unattributedGoals.coppa += count;
+    else unattributedGoals.campionato += count;
+  };
+
+  matches.forEach(match => {
+    const score = villanoveseScore(match);
+    if (!score) return;
+    const competition = competitionLabel(match);
+
+    const starters = (lineupsByMatch.get(match.match_id) ?? [])
+      .filter(row => row.titolare)
+      .sort((a, b) =>
+        (a.ordine ?? a.numero ?? Number.MAX_SAFE_INTEGER) -
+          (b.ordine ?? b.numero ?? Number.MAX_SAFE_INTEGER) ||
+        (a.numero ?? Number.MAX_SAFE_INTEGER) - (b.numero ?? Number.MAX_SAFE_INTEGER)
+      );
+    const startingGoalkeeper = starters.find(row => row.ordine === 1 || row.numero === 1) ?? starters[0];
+    if (!startingGoalkeeper?.player_id) return;
+
+    const matchSubstitutions = [...(substitutionsByMatch.get(match.match_id) ?? [])]
+      .sort((a, b) => a.minuto - b.minuto);
+    const goalkeeperChanges: { minute: number; playerOutId: string; playerInId: string }[] = [];
+    const goalkeeperAppearances = new Map<string, boolean>([[startingGoalkeeper.player_id, true]]);
+    let currentGoalkeeperId = startingGoalkeeper.player_id;
+
+    matchSubstitutions.forEach(substitution => {
+      if (
+        substitution.player_out_id !== currentGoalkeeperId ||
+        !substitution.player_in_id
+      ) return;
+
+      goalkeeperChanges.push({
+        minute: num(substitution.minuto),
+        playerOutId: substitution.player_out_id,
+        playerInId: substitution.player_in_id,
+      });
+      currentGoalkeeperId = substitution.player_in_id;
+      if (!goalkeeperAppearances.has(currentGoalkeeperId)) {
+        goalkeeperAppearances.set(currentGoalkeeperId, false);
+      }
+    });
+
+    const rowsByGoalkeeper = new Map<string, GoalkeeperMatchStat>();
+    goalkeeperAppearances.forEach((started, playerId) => {
+      const row: GoalkeeperMatchStat = {
+        matchId: match.match_id,
+        date: match.data ?? '',
+        match: match.partita,
+        competition,
+        result: matchResult(match),
+        playerId,
+        playerName: playerNameMap.get(playerId) || playerId,
+        started,
+        teamGoalsConceded: score.opponentGoals,
+        goalsConceded: 0,
+        penaltyGoalsConceded: 0,
+        freeKickGoalsConceded: 0,
+        cleanSheet: score.opponentGoals === 0,
+      };
+      rowsByGoalkeeper.set(playerId, row);
+      matchStats.push(row);
+    });
+
+    const opponentGoals = [...(opponentGoalsByMatch.get(match.match_id) ?? [])]
+      .sort((a, b) => num(a.minuto) - num(b.minuto))
+      .slice(0, score.opponentGoals);
+
+    opponentGoals.forEach(goal => {
+      let goalkeeperId = startingGoalkeeper.player_id;
+
+      // Se gol e cambio hanno lo stesso minuto, il gol resta attribuito al
+      // portiere uscente: senza i secondi dell'evento e l'ordine piu prudente.
+      goalkeeperChanges.forEach(change => {
+        if (change.minute < num(goal.minuto) && change.playerOutId === goalkeeperId) {
+          goalkeeperId = change.playerInId;
+        }
+      });
+
+      const row = rowsByGoalkeeper.get(goalkeeperId);
+      if (!row) {
+        addUnattributedGoals(1, competition);
+        return;
+      }
+
+      row.goalsConceded += 1;
+      if (goal.goal_type === 'RIGORE') row.penaltyGoalsConceded += 1;
+      if (goal.goal_type === 'PUNIZIONE') row.freeKickGoalsConceded += 1;
+    });
+
+    const missingGoals = Math.max(0, score.opponentGoals - opponentGoals.length);
+    if (missingGoals === 0) return;
+
+    if (rowsByGoalkeeper.size === 1) {
+      rowsByGoalkeeper.get(startingGoalkeeper.player_id)!.goalsConceded += missingGoals;
+    } else {
+      // Il risultato dice quanti gol sono stati subiti, ma senza l'evento e il
+      // minuto non e possibile scegliere correttamente tra piu portieri usati.
+      addUnattributedGoals(missingGoals, competition);
+    }
+  });
+
+  return {
+    matches: matchStats.sort((a, b) =>
+      a.date.localeCompare(b.date) || a.playerName.localeCompare(b.playerName, 'it')
+    ),
+    unattributedGoals,
   };
 };
 
@@ -462,7 +624,7 @@ export async function GET() {
       .select('match_id,player_id,numero,titolare,ordine'),
     supabase
       .from('match_substitutions')
-      .select('match_id,player_out_id,player_in_id'),
+      .select('match_id,minuto,recupero,player_out_id,player_in_id'),
     supabase
       .from('match_events')
       .select('match_id,player_id,player_name,event_type,goal_type,minuto,recupero'),
@@ -600,6 +762,13 @@ export async function GET() {
   );
   const matchRowsById = new Map(
     allMatches.map(match => [match.match_id, match])
+  );
+  const goalkeeperStats = buildGoalkeeperStats(
+    allMatches,
+    allLineups,
+    allSubstitutions,
+    allOfficialEvents,
+    playerNameMap
   );
   const disciplineEvents = allOfficialEvents
     .filter(row =>
@@ -889,6 +1058,7 @@ export async function GET() {
       teamStats: allMatchStats,
       teamMatches,
       disciplineEvents,
+      goalkeeperStats,
       tactics,
       source: 'supabase',
     },

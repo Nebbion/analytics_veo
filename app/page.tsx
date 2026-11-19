@@ -63,6 +63,29 @@ type DisciplineEvent = {
   minute: number;
   injuryTime: boolean;
 };
+type GoalkeeperMatchStat = {
+  matchId: string;
+  date: string;
+  match: string;
+  competition: 'CAMPIONATO' | 'COPPA';
+  result: string;
+  playerId: string;
+  playerName: string;
+  started: boolean;
+  teamGoalsConceded: number;
+  goalsConceded: number;
+  penaltyGoalsConceded: number;
+  freeKickGoalsConceded: number;
+  cleanSheet: boolean;
+};
+type GoalkeeperStats = {
+  matches: GoalkeeperMatchStat[];
+  unattributedGoals: {
+    total: number;
+    campionato: number;
+    coppa: number;
+  };
+};
 type TacticalKind = 'average' | 'shot' | 'tackle';
 type TacticalPoint = {
   id: string;
@@ -80,7 +103,7 @@ type TacticalPoint = {
   outcome: string;
 };
 type TacticalData = { averagePositions: TacticalPoint[]; shots: TacticalPoint[]; tackles: TacticalPoint[]; source: 'supabase' | 'none' };
-type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamPlayers?: Player[]; teamStats?: Match[]; teamMatches?: TeamMatch[]; disciplineEvents?: DisciplineEvent[]; tactics?: TacticalData; error?: string };
+type Data = { stagione?: string; role?: 'STAFF' | 'GIOCATORE'; userName?: string; playerId?: string | null; players?: Player[]; matches?: Match[]; teamPlayers?: Player[]; teamStats?: Match[]; teamMatches?: TeamMatch[]; disciplineEvents?: DisciplineEvent[]; goalkeeperStats?: GoalkeeperStats; tactics?: TacticalData; error?: string };
 type PlayerCompetitionStats = {
   label: 'Campionato' | 'Coppa';
   appearances: number;
@@ -238,6 +261,141 @@ function PlayerCompetitionPanel({ stats }: { stats: PlayerCompetitionStats }) {
   </div></section>;
 }
 
+function GoalkeeperDashboard({ stats }: { stats: GoalkeeperStats }) {
+  const [competition, setCompetition] = useState<'ALL' | 'CAMPIONATO' | 'COPPA'>('ALL');
+  const filteredMatches = useMemo(() => stats.matches.filter(match =>
+    competition === 'ALL' || match.competition === competition
+  ), [competition, stats.matches]);
+  const goalkeeperRows = useMemo(() => {
+    const rows = new Map<string, {
+      playerId: string;
+      playerName: string;
+      appearances: number;
+      goalsConceded: number;
+      cleanSheets: number;
+      penaltyGoalsConceded: number;
+      freeKickGoalsConceded: number;
+    }>();
+
+    filteredMatches.forEach(match => {
+      const current = rows.get(match.playerId) ?? {
+        playerId: match.playerId,
+        playerName: match.playerName,
+        appearances: 0,
+        goalsConceded: 0,
+        cleanSheets: 0,
+        penaltyGoalsConceded: 0,
+        freeKickGoalsConceded: 0,
+      };
+      current.appearances += 1;
+      current.goalsConceded += match.goalsConceded;
+      current.cleanSheets += match.cleanSheet ? 1 : 0;
+      current.penaltyGoalsConceded += match.penaltyGoalsConceded;
+      current.freeKickGoalsConceded += match.freeKickGoalsConceded;
+      rows.set(match.playerId, current);
+    });
+
+    return [...rows.values()].sort((a, b) =>
+      b.appearances - a.appearances ||
+      a.goalsConceded - b.goalsConceded ||
+      a.playerName.localeCompare(b.playerName, 'it')
+    );
+  }, [filteredMatches]);
+  const uniqueMatches = useMemo(() => new Map(
+    filteredMatches.map(match => [match.matchId, match])
+  ), [filteredMatches]);
+  const teamGoalsConceded = [...uniqueMatches.values()].reduce(
+    (total, match) => total + match.teamGoalsConceded,
+    0
+  );
+  const teamCleanSheets = [...uniqueMatches.values()].filter(match => match.cleanSheet).length;
+  const penaltyGoalsConceded = goalkeeperRows.reduce(
+    (total, goalkeeper) => total + goalkeeper.penaltyGoalsConceded,
+    0
+  );
+  const freeKickGoalsConceded = goalkeeperRows.reduce(
+    (total, goalkeeper) => total + goalkeeper.freeKickGoalsConceded,
+    0
+  );
+  const unattributedGoals = competition === 'COPPA'
+    ? stats.unattributedGoals.coppa
+    : competition === 'CAMPIONATO'
+      ? stats.unattributedGoals.campionato
+      : stats.unattributedGoals.total;
+  const sortedMatches = [...filteredMatches].sort((a, b) =>
+    b.date.localeCompare(a.date) || a.playerName.localeCompare(b.playerName, 'it')
+  );
+  const dateLabel = (date: string) => date
+    ? new Date(`${date}T12:00:00`).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—';
+
+  return <>
+    <section className="hero goalkeeperHero">
+      <div><p className="eyebrow">GOALKEEPER ROOM</p><h1>Statistiche portieri</h1><p>Presenze, gol subiti, clean sheet e dettaglio dei gol da fermo.</p></div>
+      <label className="selector">Competizione<select value={competition} onChange={event => setCompetition(event.target.value as 'ALL' | 'CAMPIONATO' | 'COPPA')}>
+        <option value="ALL">Tutte le competizioni</option>
+        <option value="CAMPIONATO">Campionato</option>
+        <option value="COPPA">Coppa</option>
+      </select></label>
+    </section>
+
+    <section className="statsGrid goalkeeperKpis">
+      <Stat label="Portieri utilizzati" value={int(goalkeeperRows.length)} />
+      <Stat label="Partite" value={int(uniqueMatches.size)} />
+      <Stat label="Gol subiti" value={int(teamGoalsConceded)} />
+      <Stat label="Gol subiti / partita" value={uniqueMatches.size > 0 ? fmt(teamGoalsConceded / uniqueMatches.size, 2) : '—'} />
+      <Stat label="Clean sheet" value={int(teamCleanSheets)} />
+      <Stat label="Clean sheet %" value={uniqueMatches.size > 0 ? `${fmt(teamCleanSheets * 100 / uniqueMatches.size, 1)}%` : '—'} />
+      <Stat label="Gol subiti su rigore" value={int(penaltyGoalsConceded)} />
+      <Stat label="Gol subiti su punizione" value={int(freeKickGoalsConceded)} />
+    </section>
+
+    <section className="panel tablePanel goalkeeperSummaryPanel">
+      <div className="sectionTitle"><div><span className="eyebrow">RIEPILOGO</span><h2>Rendimento per portiere</h2></div><span>{goalkeeperRows.length} portieri</span></div>
+      {goalkeeperRows.length ? <div className="tableWrap"><table className="goalkeeperTable">
+        <thead><tr><th>Portiere</th><th>Partite</th><th>Gol subiti</th><th>GS / partita</th><th>Clean sheet</th><th>Clean sheet %</th><th>Su rigore</th><th>Su punizione diretta</th></tr></thead>
+        <tbody>{goalkeeperRows.map(goalkeeper => <tr key={goalkeeper.playerId}>
+          <td><strong>{goalkeeper.playerName}</strong></td>
+          <td>{int(goalkeeper.appearances)}</td>
+          <td>{int(goalkeeper.goalsConceded)}</td>
+          <td>{goalkeeper.appearances > 0 ? fmt(goalkeeper.goalsConceded / goalkeeper.appearances, 2) : '—'}</td>
+          <td>{int(goalkeeper.cleanSheets)}</td>
+          <td>{goalkeeper.appearances > 0 ? `${fmt(goalkeeper.cleanSheets * 100 / goalkeeper.appearances, 1)}%` : '—'}</td>
+          <td>{int(goalkeeper.penaltyGoalsConceded)}</td>
+          <td>{int(goalkeeper.freeKickGoalsConceded)}</td>
+        </tr>)}</tbody>
+      </table></div> : <p className="rankEmpty">Nessun portiere identificabile nelle formazioni ufficiali disponibili.</p>}
+      <p className="goalkeeperMethodNote">Il portiere titolare è ricavato dalla prima posizione della formazione ufficiale YouCoach; eventuali cambi portiere seguono la cronologia delle sostituzioni.</p>
+      {unattributedGoals > 0 && <p className="goalkeeperDataWarning">{int(unattributedGoals)} {unattributedGoals === 1 ? 'gol non è attribuibile' : 'gol non sono attribuibili'} con certezza a un singolo portiere perché nella stessa gara sono stati usati più portieri e manca il minuto del gol avversario.</p>}
+    </section>
+
+    <section className="panel tablePanel goalkeeperMatchesPanel">
+      <div className="sectionTitle"><div><span className="eyebrow">MATCH LOG</span><h2>Dettaglio partita</h2></div><span>{filteredMatches.length} presenze</span></div>
+      {sortedMatches.length ? <div className="tableWrap"><table className="goalkeeperMatchTable">
+        <thead><tr><th>Data</th><th>Partita</th><th>Competizione</th><th>Portiere</th><th>Impiego</th><th>Risultato</th><th>Gol subiti</th><th>Clean sheet</th><th>Report</th></tr></thead>
+        <tbody>{sortedMatches.map(match => {
+          const goalDetails = [
+            match.penaltyGoalsConceded > 0 ? `${int(match.penaltyGoalsConceded)} rig.` : '',
+            match.freeKickGoalsConceded > 0 ? `${int(match.freeKickGoalsConceded)} pun.` : '',
+          ].filter(Boolean).join(' · ');
+
+          return <tr key={`${match.matchId}-${match.playerId}`}>
+            <td>{dateLabel(match.date)}</td>
+            <td>{match.match}</td>
+            <td>{match.competition === 'COPPA' ? 'Coppa' : 'Campionato'}</td>
+            <td><strong>{match.playerName}</strong></td>
+            <td>{match.started ? 'Titolare' : 'Subentrato'}</td>
+            <td>{match.result || '—'}</td>
+            <td>{int(match.goalsConceded)}{goalDetails ? <small className="goalkeeperGoalDetail">{goalDetails}</small> : null}</td>
+            <td>{match.cleanSheet ? <span className="cleanSheetBadge">Sì</span> : '—'}</td>
+            <td><a className="reportTableLink" href={`/matches/${encodeURIComponent(match.matchId)}`}>Apri report</a></td>
+          </tr>;
+        })}</tbody>
+      </table></div> : <p className="rankEmpty">Nessuna partita disponibile per il filtro selezionato.</p>}
+    </section>
+  </>;
+}
+
 function TeamMatchesSection({ matches }: { matches: TeamMatch[] }) {
   const sortedMatches = [...matches].sort((a, b) => b.date.localeCompare(a.date));
   const dateLabel = (date: string) => date
@@ -320,7 +478,7 @@ export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState('');
-  const [view, setView] = useState<'home' | 'player' | 'team' | 'minutes' | 'tactics' | 'compare'>('home');
+  const [view, setView] = useState<'home' | 'player' | 'team' | 'goalkeepers' | 'minutes' | 'tactics' | 'compare'>('home');
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
   const [tacticalMode, setTacticalMode] = useState<TacticalMode>('average');
@@ -350,6 +508,10 @@ export default function Home() {
   const teamPlayers = data?.teamPlayers ?? players;
   const teamStats = data?.teamStats ?? matches;
   const teamMatches = data?.teamMatches ?? [];
+  const goalkeeperStats = data?.goalkeeperStats ?? {
+    matches: [],
+    unattributedGoals: { total: 0, campionato: 0, coppa: 0 },
+  };
   const tactics = data?.tactics ?? { averagePositions: [], shots: [], tackles: [], source: 'none' as const };
   const player = useMemo(() => players.find(p => p.name === selected), [players, selected]);
   const playerMatches = useMemo(() => matches.filter(m => m.playerName === selected).sort((a,b) => a.date.localeCompare(b.date)), [matches, selected]);
@@ -716,12 +878,15 @@ export default function Home() {
       <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
       <button className={view === 'player' ? 'active' : ''} onClick={() => setView('player')}>Giocatore</button>
       <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button>
+      <button className={view === 'goalkeepers' ? 'active' : ''} onClick={() => setView('goalkeepers')}>Portieri</button>
       {data.role === 'STAFF' && <button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button>}
       <button className={view === 'tactics' ? 'active' : ''} onClick={() => setView('tactics')}>Tattica</button>
       {data.role === 'STAFF' && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
     </nav>
 
     {view === 'home' && <ChampionshipDashboard matches={teamMatches} playerStats={teamStats} disciplineEvents={data.disciplineEvents ?? []} />}
+
+    {view === 'goalkeepers' && <GoalkeeperDashboard stats={goalkeeperStats} />}
 
     {view === 'player' && <>
       <section className="hero"><div><p className="eyebrow">PLAYER CENTER</p><h1>{data.role === 'GIOCATORE' ? 'Profilo personale' : 'Dashboard giocatore'}</h1><p>{data.role === 'GIOCATORE' ? 'Le tue statistiche stagionali e tutte le partite della squadra.' : 'Statistiche stagionali e rendimento partita per partita.'}</p></div>{data.role === 'STAFF' && <label className="selector">Giocatore<select value={selected} onChange={e => setSelected(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label>}</section>

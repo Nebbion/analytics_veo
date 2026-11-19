@@ -140,7 +140,9 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
     var relatedPlayerId = relatedPlayerName
       ? youCoachPlayerId_(null, relatedPlayerName, playerIdByName)
       : '';
-    var goalType = eventType === 'GOAL' ? youCoachGoalType_(event) : '';
+    var goalType = eventType === 'GOAL' || eventType === 'OPPONENT_GOAL'
+      ? youCoachGoalType_(event)
+      : '';
     var minute = youCoachNullableInteger_(event.minuto);
     if ((eventType !== 'OPPONENT_GOAL' && !playerId) || minute === '') return;
 
@@ -217,7 +219,7 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_() {
           event_type: String(row.Event_Type),
           minuto: Number(row.Minuto),
           recupero: row.Recupero === true || String(row.Recupero).toLowerCase() === 'true',
-          player_id: String(row.Player_ID),
+          player_id: youCoachText_(row.Player_ID) || null,
           player_name: youCoachText_(row.Giocatore),
           related_player_id: youCoachText_(row.Related_Player_ID) || null,
           related_player_name: youCoachText_(row.Giocatore_Related) || null,
