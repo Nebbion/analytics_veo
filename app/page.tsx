@@ -881,6 +881,7 @@ export default function Home() {
       <button className={view === 'goalkeepers' ? 'active' : ''} onClick={() => setView('goalkeepers')}>Portieri</button>
       {data.role === 'STAFF' && <button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button>}
       <button className={view === 'tactics' ? 'active' : ''} onClick={() => setView('tactics')}>Tattica</button>
+      {data.role === 'STAFF' && <a className="vaNav" href="/viceallenatore">Analisi tattica / Viceallenatore AI</a>}
       {data.role === 'STAFF' && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
     </nav>
 

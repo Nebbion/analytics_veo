@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://villanovese.local/viceallenatore/event-contract/1.0.0",
+  "title": "Evento tattico canonico",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "match_id", "period", "video_start_ms", "video_end_ms", "game_clock", "event_type", "phase", "observability", "relevance", "source_refs", "claims", "assessment", "sync"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "analysis_pipeline_version": {"type": "string"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "match_id": {"type": "string", "minLength": 1},
+    "season_id": {"type": ["string", "null"], "format": "uuid"},
+    "period": {"enum": ["first_half", "second_half", "extra_time", "unknown"]},
+    "video_start_ms": {"type": ["integer", "null"], "minimum": 0},
+    "video_end_ms": {"type": ["integer", "null"], "minimum": 0},
+    "game_clock": {"type": "object", "additionalProperties": false, "required": ["minute", "stoppage", "mapping_verified"], "properties": {"minute": {"type": ["integer", "null"], "minimum": 0}, "stoppage": {"type": ["integer", "null"], "minimum": 0}, "mapping_verified": {"type": "boolean"}}},
+    "event_type": {"type": "string", "minLength": 1},
+    "phase": {"enum": ["in_possession", "out_of_possession", "transition", "unknown"]},
+    "zone": {"type": ["string", "null"]},
+    "team_id": {"type": ["string", "null"]},
+    "player_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "observability": {"enum": ["observable", "partially_observable", "not_observable"]},
+    "relevance": {"enum": ["relevant", "not_relevant", "undetermined"]},
+    "source_refs": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["source_id", "kind"], "properties": {"source_id": {"type": "string", "format": "uuid"}, "kind": {"enum": ["video", "mhtml", "pdf", "annotation", "clip", "other"]}, "start_ms": {"type": ["integer", "null"], "minimum": 0}, "end_ms": {"type": ["integer", "null"], "minimum": 0}, "pdf_page": {"type": ["integer", "null"], "minimum": 1}, "field_of_view_limits": {"type": ["string", "null"]}}}},
+    "principle_ref": {"type": ["object", "null"], "additionalProperties": false, "required": ["principle_id", "game_plan_version_id", "pdf_page"], "properties": {"principle_id": {"type": ["string", "null"], "format": "uuid"}, "game_plan_version_id": {"type": ["string", "null"], "format": "uuid"}, "pdf_page": {"type": ["integer", "null"], "minimum": 1}}},
+    "claims": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["type", "text", "review_status", "confidence", "evidence_quality"], "properties": {"type": {"enum": ["osservazione", "interpretazione", "ipotesi"]}, "text": {"type": "string", "minLength": 1}, "review_status": {"enum": ["proposed", "reviewed", "rejected"]}, "confidence": {"type": "string"}, "evidence_quality": {"type": "string"}, "valid_from": {"type": ["string", "null"], "format": "date-time"}, "valid_until": {"type": ["string", "null"], "format": "date-time"}}}},
+    "assessment": {"type": ["object", "null"], "additionalProperties": false, "required": ["plan_compliance", "technical_quality", "review_status"], "properties": {"plan_compliance": {"enum": ["conforme", "non_conforme", "adattamento_giustificato", "non_valutabile"]}, "technical_quality": {"enum": ["positiva", "negativa", "mista", "non_valutabile"]}, "review_status": {"enum": ["proposed", "reviewed"]}}},
+    "sync": {"type": "object", "additionalProperties": false, "required": ["origin", "revision"], "properties": {"origin": {"enum": ["local", "cloud"]}, "revision": {"type": "integer", "minimum": 1}}}
+  }
+}

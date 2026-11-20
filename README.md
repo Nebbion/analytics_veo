@@ -48,3 +48,7 @@ Configurare una sola volta questi GitHub Actions Secrets:
 Il workflow `.github/workflows/deploy-supabase.yml` esegue prima il dry-run e poi
 `supabase db push`. Dopo l'attivazione di questo flusso, tutte le modifiche allo
 schema devono passare da una nuova migration Git.
+
+## Viceallenatore AI · prima fase
+
+L'area staff è in `/viceallenatore` nella dashboard. Vedi [guida operativa](docs/viceallenatore/uso-quotidiano.md), [audit](docs/viceallenatore/audit.md), [modello dati](docs/viceallenatore/data-model.md), [prova sui file reali](docs/viceallenatore/real-file-validation.md) e [benchmark locale](docs/viceallenatore/benchmark.md). Il video originale rimane sul Mac; il bundle JSON trasferisce alla UI solo hash, metadati ed eventuali annotazioni. Prima di usare l'area, applica la migration nuova al database **di sviluppo** e verifica accesso/RLS. Le migration su `main` vengono distribuite alla produzione dal workflow esistente: non fare merge senza revisione e backup.

@@ -2,5 +2,14 @@
 .next
 .idea
 .env.local
+/data/local/
+/local_engine/.venv/
+*.mhtml
+*.mht
+*.mp4
+*.mov
+*.pdf
+*.partial.mp4
+__pycache__/
 .next/
 /tsconfig.tsbuildinfo
