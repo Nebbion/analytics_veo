@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "kind",
+    "phase",
+    "zone",
+    "opponent_shape",
+    "own_goal",
+    "field",
+    "entities",
+    "relations",
+    "questions"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "kind": {
+      "enum": [
+        "match_context",
+        "open_play",
+        "offensive_corner",
+        "defensive_corner",
+        "defensive_free_kick",
+        "set_piece_duties",
+        "unknown"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "in_possession",
+        "out_of_possession",
+        "unknown"
+      ]
+    },
+    "zone": {
+      "enum": [
+        "zone_1",
+        "zone_2",
+        "zone_3",
+        "unknown"
+      ]
+    },
+    "opponent_shape": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 30
+    },
+    "own_goal": {
+      "enum": [
+        "top",
+        "bottom",
+        "unknown"
+      ]
+    },
+    "field": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "extent",
+        "corners",
+        "half"
+      ],
+      "properties": {
+        "extent": {
+          "enum": [
+            "full",
+            "half"
+          ]
+        },
+        "corners": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/point"
+          }
+        },
+        "half": {
+          "enum": [
+            "own",
+            "opponent",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "bbox",
+          "anchor",
+          "corner_side"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "kind": {
+            "enum": [
+              "player",
+              "player_reference",
+              "ball",
+              "role_group",
+              "wall_slot",
+              "text",
+              "unknown"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "bbox": {
+            "$ref": "#/$defs/box"
+          },
+          "anchor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/point"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "corner_side": {
+            "enum": [
+              "left",
+              "right",
+              "both",
+              "unknown"
+            ]
+          }
+        }
+      }
+    },
+    "relations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "subjects",
+          "targets",
+          "destination",
+          "bbox",
+          "description",
+          "event_type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "kind": {
+            "enum": [
+              "movement",
+              "alternatives",
+              "role_assignment",
+              "taker_list",
+              "unknown"
+            ]
+          },
+          "subjects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/point"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bbox": {
+            "$ref": "#/$defs/box"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "event_type": {
+            "enum": [
+              "penalty",
+              "direct_free_kick",
+              "indirect_free_kick",
+              "unknown"
+            ]
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "prompt",
+          "field",
+          "relation_id",
+          "entity_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "field": {
+            "enum": [
+              "own_goal",
+              "relation_kind",
+              "kind",
+              "corner_side",
+              "event_type"
+            ]
+          },
+          "relation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entity_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "box": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  }
+}

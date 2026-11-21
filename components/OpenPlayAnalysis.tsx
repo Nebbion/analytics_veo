@@ -2,6 +2,7 @@
 import { useEffect,useState } from 'react';
 import type { Row } from '../lib/viceallenatore/draft';
 import { DutiesEpisode,DutiesPlan,PlanBrief } from './GamePlanSections';
+import { PdfPlanReader } from './PdfPlanReader';
 
 const clock=(ms:number)=>`${Math.floor(ms/60000).toString().padStart(2,'0')}:${Math.floor(ms/1000%60).toString().padStart(2,'0')}`;
 const phaseName=(plan:Row)=>plan.kind==='match_context'?'Modulo e convocati':plan.kind==='set_piece_duties'?'Battitori · rigori e piazzati':plan.kind==='defensive_corner'?'Corner difensivo · lato illustrato':plan.kind==='defensive_free_kick'?'Punizione difensiva e barriera · lato illustrato':plan.context.phase==='in_possession'?`Possesso · ${plan.context.zone==='zone_1'?'zona 1':'zona 2'}`:`Non possesso · uscite contro ${plan.context.opponent_shape??'struttura da verificare'}`;
@@ -24,6 +25,7 @@ export function OpenPlayAnalysis({matchId,modelVersionId,players=[],lineups=[]}:
     {!local?<p>Apri l’app sul Mac per elaborare il video locale.</p>:<>
       {error&&<p role="alert">{error}</p>}{!state&&!error&&<p role="status">Recupero piano e video già importati…</p>}
       {state&&<>
+        {state.pdf_reader&&<PdfPlanReader matchId={matchId} summary={state.pdf_reader} asset={asset} post={post} refresh={load}/>}
         {!!state.inventory?.length&&<details className="vaPlanInventory"><summary>{state.inventory.filter((p:Row)=>p.available).length}/{state.inventory.length} pagine recuperate · indice del piano</summary><p>Le pagine recuperate sono riferimenti disponibili, non analisi video già validate.</p>{state.inventory.map((page:Row)=><div key={page.id}>{page.kind==='offensive_corner'?<a href="#offensive-corners">Pagina {page.pdf_page} · {page.title} → corner a favore</a>:page.available?<button onClick={()=>setPlanId(page.id)}>Pagina {page.pdf_page} · {page.title}{page.needs_interpretation?' · lettura da chiarire':''}</button>:<p>Pagina {page.pdf_page} · {page.title} · formato non ancora interpretato</p>}</div>)}</details>}
         <details><summary>{state.seasonal_model?`Modello stagionale recuperato · v${state.seasonal_model.version}`:'Modello stagionale non ancora approvato'}</summary><p>{state.seasonal_model?.snapshot?.description??'Puoi configurarlo nella sezione del modello stagionale. Il confronto con le pagine del piano è comunque disponibile.'}</p><p className="vaNote">I principi testuali restano un riferimento tecnico: il prototipo misura geometria e spostamenti, senza dedurre automaticamente che un principio sia rispettato.</p></details>
         {!state.plans.length&&<p>Importa soltanto il piano gara mancante dal launcher locale.</p>}

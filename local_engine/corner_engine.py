@@ -153,7 +153,14 @@ def assets(match_id):
             interpretation=read(base/f'side-meaning-{source["sha256"]}.json')
             entry=apply_side_rule(entry,interpretation)
             result.append(entry)
-    return result
+    try:from .pdf_reader import approved_plans
+    except ImportError:from pdf_reader import approved_plans
+    merged={p['id']:p for p in result}
+    for plan in approved_plans(match_id):
+        if plan['kind']!='offensive_corner':continue
+        saved=read(base/f'plan-{plan["id"]}.json')
+        merged[plan['id']]=saved if saved and saved.get('reader_revision')==plan['reader_revision'] and saved.get('pdf_sha256')==plan['pdf_sha256'] else plan
+    return list(merged.values())
 
 
 def validate_points(points):
@@ -458,6 +465,10 @@ def analyze_clip(match_id,payload):
 
 def api(payload):
     match_id=str(payload['match_id']);op=payload['op'];base=folder(match_id)
+    if op.startswith('reader_'):
+        try:from .pdf_reader import api as reader_api
+        except ImportError:from pdf_reader import api as reader_api
+        return reader_api(payload)
     if op.startswith('play_'):
         try:from .open_play import api as play_api
         except ImportError:from open_play import api as play_api

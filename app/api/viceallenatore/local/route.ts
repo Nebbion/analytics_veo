@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { localStaff,runLocal,startScan,cancelScan,errorResponse } from '../../../../lib/viceallenatore/local-server';
 import { createClient } from '../../../../lib/supabase/server';
-import { playModel } from '../../../../lib/viceallenatore/play-model';
+import { playModel,readerRoster } from '../../../../lib/viceallenatore/play-model';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 export async function GET(request:NextRequest) {
@@ -23,7 +23,12 @@ export async function POST(request:NextRequest) {
       if(!ready.videos.some((v:{id:string})=>v.id===payload.source_id))throw new Error('Video non registrato per questa partita.');
       return Response.json(await startScan(payload.match_id,payload.source_id,payload.start_ms,payload.end_ms),{status:202});
     }
-    if(!['save_plan','event','review','play_save_plan','play_review'].includes(payload.op))throw new Error('Operazione non supportata.');
+    if(!['save_plan','event','review','play_save_plan','play_review','reader_read','reader_page','reader_review'].includes(payload.op))throw new Error('Operazione non supportata.');
+    if(payload.op.startsWith('reader_')){
+      const db=await createClient();await playModel(db,payload.match_id);
+      const reader_roster=await readerRoster(db);
+      return Response.json(await runLocal({...payload,reader_roster,reviewed_by:staff}),{headers:{'Cache-Control':'no-store'}});
+    }
     const seasonal_model=payload.op.startsWith('play_')?await playModel(await createClient(),payload.match_id):undefined;
     return Response.json(await runLocal({...payload,seasonal_model,reviewed_by:staff}));
   }catch(e){return errorResponse(e);}

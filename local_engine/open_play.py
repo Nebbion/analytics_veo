@@ -169,7 +169,14 @@ def assets(match_id):
                 saved=core.read(base/f'play-plan-{key}.json')
                 if saved and saved.get('pdf_sha256')==source['sha256'] and saved.get('annotation_revision')==plan.get('annotation_revision') and saved.get('kind')==plan['kind']:plan=saved
                 result.append(plan)
-    return result
+    try:from .pdf_reader import approved_plans
+    except ImportError:from pdf_reader import approved_plans
+    merged={p['id']:p for p in result}
+    for plan in approved_plans(match_id):
+        if plan['kind']=='offensive_corner':continue
+        saved=core.read(base/f'play-plan-{plan["id"]}.json')
+        merged[plan['id']]=saved if saved and saved.get('reader_revision')==plan['reader_revision'] and saved.get('pdf_sha256')==plan['pdf_sha256'] else plan
+    return list(merged.values())
 
 
 def inventory(match_id,plans,corners):
@@ -182,7 +189,7 @@ def inventory(match_id,plans,corners):
                 text=page.get_text();kind=game_plan.page_kind(text);key=f'{source["id"]}-{index+1}';plan=known.get(key)
                 pages.append({'id':key,'pdf_source_id':source['id'],'pdf_sha256':source['sha256'],'pdf_page':index+1,
                               'title':plan['title'] if plan else text.splitlines()[0] if text.strip() else 'Pagina senza testo leggibile',
-                              'kind':kind,'available':plan is not None,'reviewed':bool(plan and plan.get('reviewed')),
+                              'kind':plan.get('kind',kind) if plan else kind,'available':plan is not None,'reviewed':bool(plan and plan.get('reviewed')),
                               'needs_interpretation':bool(plan and plan.get('requires_role_interpretation')) or kind=='set_piece_duties' and not bool(plan and plan.get('duties'))})
     return pages
 
@@ -291,7 +298,9 @@ def measure_motion(plan,event,payload):
 def api(payload):
     match_id=str(payload['match_id']);op=payload['op']
     if op=='play_prepare':
-        ready=core.api({'op':'prepare','match_id':match_id});corners=ready['plans'];ready['plans']=assets(match_id);ready['inventory']=inventory(match_id,ready['plans'],corners);ready['pipeline']=PIPELINE;ready['seasonal_model']=payload.get('seasonal_model');return ready
+        try:from .pdf_reader import summary
+        except ImportError:from pdf_reader import summary
+        ready=core.api({'op':'prepare','match_id':match_id});corners=ready['plans'];ready['plans']=assets(match_id);ready['inventory']=inventory(match_id,ready['plans'],corners);ready['pipeline']=PIPELINE;ready['seasonal_model']=payload.get('seasonal_model');ready['pdf_reader']=summary(match_id);return ready
     if op=='play_save_plan':return save_plan(match_id,payload)
     if op=='play_review':
         event_id=payload['event_id']

@@ -15,3 +15,9 @@ export async function playModel(db:any,matchId:string) {
   const version=applicableModel(models.data??[],season,settings.data?.model_id);
   return version?{...version,season_label:season}:null;
 }
+
+export async function readerRoster(db:any) {
+  const result=await db.from('players').select('player_id,nome');
+  if(result.error)throw new Error(result.error.message);
+  return result.data??[];
+}

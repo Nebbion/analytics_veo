@@ -10,7 +10,9 @@ La schermata iniziale riutilizza partita, rosa, distinta, eventi e statistiche d
 6. Le correzioni e revisioni sono salvate con il testo originale e le fonti. Si riapplicano automaticamente alla stessa evidenza invariata; se cambia l'evidenza, il punto torna da verificare. Le revisioni delle altre partite della stagione compaiono come memoria consultabile, senza trasformarsi in fatti della partita corrente.
 7. Esporta la bozza in JSON e usa il menu **6** del launcher per il PDF. Il report conserva tipi di affermazione, fonti, correzioni e stato di revisione; omette sezioni opzionali prive di evidenze.
 
-Piano gara specifico, TOP/FLOP, sincronizzazione video, episodi e allenamenti sono in **Strumenti facoltativi**. L'analisi automatica del video resta una fase successiva.
+Per il confronto con il filmato apri **Piano gara · confronto con il video** o **Corner a favore · piano e video**. Sono prototipi locali assistiti: le scene proposte, le tracce e le conclusioni richiedono verifica. Piano gara, TOP/FLOP, sincronizzazione, episodi e allenamenti rimangono facoltativi per la bozza dai report.
+
+Puoi aggiungere il PDF direttamente in **Lettura automatica del PDF**: viene associato alla partita selezionata e conservato sul Mac. Premi **Leggi il piano sul Mac** per leggere le pagine e controllare testo e nomi con l'evidenza originale. Le correzioni sono salvate; l'approvazione dei disegni richiede il motore visivo locale. Stato effettivo, configurazione e limiti sono nella [guida del lettore PDF](pdf-reader.md). Per questo percorso non serve esportare un bundle JSON.
 
 Per attivare salvataggio bozze e memoria applica anche `supabase/migrations/20261121120000_viceallenatore_zero_entry.sql` al database di sviluppo dopo la migration di fase 1. La nuova migration aggiunge impostazione stagionale, bozze e revisioni; non modifica i dati Analytics esistenti. In assenza delle nuove tabelle la lettura dei dati disponibili e l'esportazione funzionano, mentre il salvataggio segnala l'errore.
 

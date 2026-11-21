@@ -55,7 +55,7 @@ export async function cancelScan(matchId:string,runId:string) {
   await writeFile(path.join(job,'cancel'),'1');return {status:'cancelling'};
 }
 export async function safeAsset(matchId:string,relative:string) {
-  if(!/^(?:corners\/(?:plan-[a-f0-9-]+\.png|(?:run|event)-[a-f0-9-]+\/frame-\d+\.jpg)|clip-[a-f0-9-]+-\d+-\d+\.mp4)$/.test(relative))throw new Error('File non consentito.');
+  if(!/^(?:corners\/(?:(?:plan|reader)-[a-f0-9-]+\.png|(?:run|event)-[a-f0-9-]+\/frame-\d+\.jpg)|clip-[a-f0-9-]+-\d+-\d+\.mp4)$/.test(relative))throw new Error('File non consentito.');
   const base=await realpath(mediaFolder(matchId));const file=await realpath(path.join(base,relative));
   if(!file.startsWith(base+path.sep))throw new Error('File non consentito.');
   return file;
