@@ -46,3 +46,17 @@ erDiagram
 RLS: solo un utente Supabase autenticato con profilo `utenti.attivo=true` e ruolo `STAFF` può leggere/scrivere; `anon` e giocatori non ricevono grant. Il frontend usa la chiave publishable e la sessione utente. Prima del deploy fare backup del DB di sviluppo e applicare la migration lì. La migration non è stata applicata automaticamente dal lavoro locale. Per rollback in sviluppo eliminare le nuove tabelle in ordine inverso solo dopo backup e verifica delle dipendenze; in produzione preferire migration correttiva, non DROP. Il workflow GitHub esistente invia le migration in produzione solo dopo il merge su `main`.
 
 Il contratto canonico è [`event-contract.json`](event-contract.json). Il motore locale lo carica e serializza eventi annidati; la UI ne valida campi e classificazioni prima di adattarli alle tabelle relazionali. Versioni: `event_schema_version`, `analysis_pipeline_version`, versione numerica del Game Plan e del Tactical Model. La UI non interpreta ID non verificati da MHTML come giocatori/partite canonici.
+
+## Estensione zero inserimenti superflui · 21 novembre 2026
+
+La migration `20261121120000_viceallenatore_zero_entry.sql` aggiunge una scelta del modello per stagione e snapshot di analisi indipendenti da un piano partita. Le revisioni sono append-only, con controllo della presenza del punto nella bozza e audit. L'hash degli input impedisce di duplicare la stessa bozza; una correzione viene riusata solo a parità di punto ed evidenza. Le revisioni storiche restano consultabili se cambiano i dati.
+
+```mermaid
+erDiagram
+  tactical_models ||--o{ tactical_season_settings : riuso_stagionale
+  tactical_model_versions o|--o{ tactical_analysis_drafts : riferimento_facoltativo
+  matches ||--o{ tactical_analysis_drafts : snapshot
+  tactical_analysis_drafts ||--o{ tactical_analysis_reviews : revisioni_immutabili
+```
+
+Nessuna FK nuova dal match verso un piano obbligatorio. Le etichette stagionali sono normalizzate nell'app; non viene inventata una mappatura verso le stagioni LND. Le informazioni del report esistente rimangono nelle tabelle Analytics canoniche.

@@ -49,6 +49,8 @@ Il workflow `.github/workflows/deploy-supabase.yml` esegue prima il dry-run e po
 `supabase db push`. Dopo l'attivazione di questo flusso, tutte le modifiche allo
 schema devono passare da una nuova migration Git.
 
-## Viceallenatore AI · prima fase
+## Viceallenatore AI · zero inserimenti superflui
 
 L'area staff è in `/viceallenatore` nella dashboard. Vedi [guida operativa](docs/viceallenatore/uso-quotidiano.md), [audit](docs/viceallenatore/audit.md), [modello dati](docs/viceallenatore/data-model.md), [prova sui file reali](docs/viceallenatore/real-file-validation.md) e [benchmark locale](docs/viceallenatore/benchmark.md). Il video originale rimane sul Mac; il bundle JSON trasferisce alla UI solo hash, metadati ed eventuali annotazioni. Prima di usare l'area, applica la migration nuova al database **di sviluppo** e verifica accesso/RLS. Le migration su `main` vengono distribuite alla produzione dal workflow esistente: non fare merge senza revisione e backup.
+
+Il percorso quotidiano è **Importa → Analizza → Revisiona**: partita/rosa/statistiche vengono riutilizzate, gli MHTML si possono importare direttamente, il modello è stagionale e le revisioni si conservano. La bozza usa regole trasparenti senza analisi automatica del video. Piano gara, TOP/FLOP e annotazioni avanzate restano facoltativi. La nuova persistenza richiede anche `20261121120000_viceallenatore_zero_entry.sql`; dettagli in [zero data entry](docs/viceallenatore/zero-data-entry.md).

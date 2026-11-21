@@ -153,6 +153,25 @@ class LocalEngineTest(unittest.TestCase):
             self.assertNotIn("Decisione 4",content)
             self.assertIn("1/2",content)
 
+    def test_report_draft_keeps_claim_types_reviews_and_omits_empty_forms(self):
+        import pymupdf
+        report_json = self.folder / "draft.json"
+        report_json.write_text(json.dumps({"schema_version":"1.0.0","match_id":"M1","draft_items":[
+            {"type":"osservazione","text":"Dato corretto","original_text":"Dato originale","sources":["matches:M1"],"review":{"verdict":"corrected","note":"verifica staff","created_at":"2026-11-21"}},
+            {"type":"ipotesi","text":"Verificare il pressing","sources":["model:V1"],"requires_review":True},
+            {"type":"interpretazione","text":"Da escludere","sources":[],"review":{"verdict":"dismissed"}}
+        ]}))
+        pdf=self.folder / "draft.pdf"
+        va.render_report(report_json,pdf)
+        with pymupdf.open(pdf) as doc:
+            content="\n".join(page.get_text() for page in doc)
+            self.assertIn("Dato corretto",content)
+            self.assertIn("Dato originale",content)
+            self.assertIn("Ipotesi da verificare",content)
+            self.assertNotIn("Da escludere",content)
+            self.assertNotIn("TOP/FLOP",content)
+            self.assertNotIn("0/0",content)
+
 
 if __name__ == "__main__":
     unittest.main()

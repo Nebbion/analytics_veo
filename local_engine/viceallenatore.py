@@ -471,7 +471,7 @@ def render_report(input_path, output_path):
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="ReportTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=19, leading=23, textColor=colors.HexColor("#18452a"), spaceAfter=12))
     styles.add(ParagraphStyle(name="ReportSection", parent=styles["Heading2"], fontSize=12, leading=15, textColor=colors.HexColor("#18452a"), spaceBefore=14, spaceAfter=6, keepWithNext=True))
-    styles.add(ParagraphStyle(name="ReportBody", parent=styles["BodyText"], fontSize=9, leading=13, alignment=TA_LEFT, spaceAfter=5))
+    styles.add(ParagraphStyle(name="ReportBody", parent=styles["BodyText"], fontSize=9, leading=11 if "draft_items" in data else 13, alignment=TA_LEFT, spaceAfter=4 if "draft_items" in data else 5))
     story = []
     def p(value):
         story.append(Paragraph(escape(str(value or "—")), styles["ReportBody"]))
@@ -480,20 +480,20 @@ def render_report(input_path, output_path):
     story.append(Paragraph("Villanovese · Viceallenatore AI", styles["ReportTitle"]))
     p(f"Partita: {data.get('match_name') or data['match_id']} · ID {data['match_id']}")
     p("Report di annotazioni e revisioni staff. Il campione può essere incompleto o distorto. Osservazioni, interpretazioni e ipotesi restano distinte.")
-    if not data.get("approved_plan_version"):
+    if "draft_items" not in data and not data.get("approved_plan_version"):
         p("Documento diagnostico delle fonti: nessun piano gara approvato e nessuna conclusione di conformità tattica.")
     section("Fonti e provenienza")
     sources = data.get("sources", [])
     if not sources: p("Nessuna fonte importata.")
-    for source in sources:
-        p(f"{source.get('provider','?')} · {source.get('kind','?')} · {source.get('filename','?')} · SHA-256 {source.get('sha256','?')}")
+    for index, source in enumerate(sources, 1):
+        p(f"F{index} · {source.get('provider','?')} · {source.get('kind','?')} · {source.get('filename','?')} · SHA-256 {source.get('sha256','?')}")
     def source_metadata(provider):
         source = next((s for s in sources if s.get("provider") == provider and s.get("kind") == "mhtml"), {})
         return source.get("extracted_metadata") or source.get("metadata") or {}
     veo_meta, youcoach_meta = source_metadata("veo"), source_metadata("youcoach")
     veo_goals = veo_meta.get("goal_candidates") or []
     youcoach_goals = youcoach_meta.get("goal_candidates") or []
-    if veo_goals and youcoach_goals and veo_goals[0].get("minute") != youcoach_goals[0].get("minute"):
+    if "draft_items" not in data and veo_goals and youcoach_goals and veo_goals[0].get("minute") != youcoach_goals[0].get("minute"):
         section("Incongruenze tra fonti")
         p(f"Primo gol candidato: Veo {veo_goals[0]['minute']}′; YouCoach {youcoach_goals[0]['minute']}′. Entrambi i valori richiedono verifica staff; nessun tempo video è dedotto dal minuto gara.")
         decisions = data.get("reconciliations") or data.get("reconciliation") or []
@@ -504,7 +504,7 @@ def render_report(input_path, output_path):
             p("Conflitto ancora aperto: valore consolidato non approvato.")
     veo_kpis = veo_meta.get("kpi_candidates") or []
     timeline = youcoach_meta.get("timeline_candidates") or []
-    if veo_kpis or timeline:
+    if "draft_items" not in data and (veo_kpis or timeline):
         section("Dati dei report da verificare")
         if veo_kpis:
             p("Veo: prima / seconda colonna del report. Attribuzione, periodo e metodo richiedono revisione staff.")
@@ -514,60 +514,85 @@ def render_report(input_path, output_path):
             p(f"YouCoach: {len(timeline)} eventi di cronaca candidati; nessun timestamp video o ID giocatore viene dedotto.")
             for item in timeline[:30]:
                 p(f"{item.get('minute')}′ · {item.get('event_type')} · {item.get('excerpt')}")
-    section("Piano gara e conformità")
-    p(f"Versione modello stagionale: {data.get('approved_model_version') or 'nessuna'} · hash {data.get('approved_model_hash') or '—'}")
-    p(f"Versione piano approvata: {data.get('approved_plan_version') or 'nessuna'} · hash {data.get('approved_plan_hash') or '—'}")
-    compliance = data.get("compliance", {})
-    denominator = int(compliance.get("denominator", 0))
-    p(f"Campione giudicato: {denominator}; conformi {compliance.get('conforme',0)}/{denominator}; non conformi {compliance.get('non_conforme',0)}/{denominator}; adattamenti {compliance.get('adattamenti',0)}/{denominator}; non valutabili esclusi {compliance.get('non_valutabili',0)}.")
-    for segment in data.get("clock_segments", []):
-        p(f"Tratto cronometro verificato: {segment.get('period')} · video {segment.get('video_start_ms')}–{segment.get('video_end_ms')} ms · gara da {segment.get('game_start_minute')}′ · {segment.get('notes')}")
-    section("Episodi e claims")
-    for event in data.get("events", []):
-        p(f"Osservazione · video {event.get('video_start_ms')}–{event.get('video_end_ms')} ms · minuto gara {event.get('game_minute') if event.get('clock_mapping_verified') else 'non sincronizzato'} · {event.get('description','')} · ID {event.get('id')} · fonte {event.get('source_id') or 'assente'}")
-    if not data.get("events"): p("Nessun episodio verificato.")
-    for claim in data.get("claims", []):
-        p(f"{claim.get('claim_type','?')} · {claim.get('claim_text','')} · confidenza {claim.get('confidence','?')} · revisione {claim.get('review_status','?')} · evento {claim.get('event_id','?')}")
-    principles = {row.get("id"): row for row in data.get("principles", [])}
-    for assessment in data.get("assessments", []):
-        principle = principles.get(assessment.get("principle_id"), {})
-        p(f"Giudizio tattico {assessment.get('plan_compliance')} · qualità tecnica {assessment.get('technical_quality')} · evento {assessment.get('event_id')} · principio {principle.get('title','?')} · pagina PDF {principle.get('pdf_page') or '—'} · {assessment.get('reason','')}")
-    section("Palle inattive")
-    set_pieces = [x for x in data.get("events", []) if x.get("event_type") == "set_piece"]
-    if not set_pieces: p("Nessun piazzato annotato; i movimenti fuori campo non sono inferiti.")
-    for event in set_pieces:
-        p(f"Osservazione · video {event.get('video_start_ms')}–{event.get('video_end_ms')} ms · {event.get('description')} · ID {event.get('id')}")
-    section("Giocatori")
-    highlights = data.get("player_highlights", [])
-    if not highlights: p("Nessun TOP/FLOP con clip e valutazione verificata.")
-    for item in highlights:
-        p(f"{item.get('name')}: TOP {len(item.get('top',[]))}; FLOP {len(item.get('flop',[]))}.")
-        for label in ("top", "flop"):
-            for episode in item.get(label, [])[:3]: p(f"{label.upper()} · {episode.get('description')} · evento {episode.get('event_id')} · video {episode.get('video_start_ms')} ms · clip {episode.get('clip_source_id')} · {episode.get('reason')}")
-    section("Squadra e avversario")
-    for scope,label,limit in (("strength","Forza",3),("weakness","Criticità",3),("opponent_vulnerability","Vulnerabilità avversaria",5)):
-        rows = [x for x in data.get("findings", []) if x.get("scope") == scope and x.get("status") == "confermato"][:limit]
-        if not rows: p(f"{label}: evidenza insufficiente.")
-        for item in rows:
-            refs = [e.get('event_id') for e in data.get('finding_evidence', []) if e.get('finding_id') == item.get('id') and e.get('stance') == 'supports']
-            p(f"{label} · {item.get('title')} · {item.get('violations',0)}/{item.get('observed_opportunities',0)} opportunità · episodi {', '.join(refs) or 'nessuno'} · {item.get('context','')}")
-    section("Impressioni e controevidenze")
-    for item in data.get("impressions", []):
-        p(f"Impressione originale: {item.get('impression_text')}")
-        for review in item.get("impression_reviews", []): p(f"Revisione {review.get('revision')} · {review.get('verdict')} · {review.get('reasoning')}")
-    if not data.get("impressions"): p("Nessuna impressione registrata.")
-    section("Allenamenti e follow-up")
-    for item in data.get("interventions", []): p(f"Proposta: {item.get('exercise')} · obiettivo {item.get('observable_objective')} · svolto {item.get('performed_at') or 'non registrato'}")
-    for item in data.get("followups", []): p(f"Verifica partita {item.get('target_match_id') or 'da assegnare'} · {item.get('verdict') or 'in attesa'}")
-    decision_story = [Paragraph("Decisioni approvate dallo staff", styles["ReportSection"])]
-    approved_decisions = [x for x in data.get("decisions", []) if x.get("decision_briefings", {}).get("status") == "approved"]
-    latest = max((x.get("decision_briefings", {}).get("created_at", "") for x in approved_decisions), default="")
-    decisions = sorted((x for x in approved_decisions if x.get("decision_briefings", {}).get("created_at", "") == latest), key=lambda x: x.get("position", 0))[:3]
-    if not decisions: decision_story.append(Paragraph("Nessuna decisione approvata con evidenze sufficienti.", styles["ReportBody"]))
-    for item in decisions:
-        line = f"{item.get('position')}. {item.get('decision_text')} · Pro: {item.get('supporting_evidence')} · Contro: {item.get('contrary_evidence') or 'non registrate'} · Confidenza: {item.get('confidence_reason')} · Verifica: {item.get('next_match_check')}"
-        decision_story.append(Paragraph(escape(line),styles["ReportBody"]))
-    story.append(KeepTogether(decision_story))
+    if "draft_items" in data:
+        p(f"Modello stagionale: {data.get('approved_model_version') or 'non configurato'}; un piano gara specifico è facoltativo.")
+        for claim_type, label in (("osservazione", "Fatti documentati"), ("interpretazione", "Interpretazioni"), ("ipotesi", "Ipotesi da verificare")):
+            rows = [item for item in data["draft_items"] if item.get("type") == claim_type and (item.get("review") or {}).get("verdict") != "dismissed"]
+            if not rows:
+                continue
+            section(label)
+            for item in rows:
+                block_start = len(story)
+                review = item.get("review") or {}
+                status = {"accepted": "verifica da svolgere" if claim_type == "ipotesi" else "verificato dallo staff", "corrected": "corretto dallo staff"}.get(review.get("verdict"), "da revisionare" if item.get("requires_review") else "documentato dalla fonte" if claim_type == "osservazione" else "bozza da regole trasparenti")
+                p(f"{claim_type} · {status} · {item.get('text')}")
+                references = []
+                for ref in item.get("sources", []):
+                    source_number = next((index for index, source in enumerate(sources, 1) if str(ref).split(":")[0] == source.get("id")), None)
+                    references.append(f"F{source_number}" if source_number else str(ref))
+                p(f"Fonti: {', '.join(dict.fromkeys(references))}")
+                if review:
+                    p(f"Testo originale: {item.get('original_text', item.get('text'))} · Revisione {review.get('created_at')} · {review.get('note') or ''}")
+                block = story[block_start:]
+                del story[block_start:]
+                story.append(KeepTogether(block))
+        section("Limiti dell'analisi")
+        p("Bozza ricavata da dati e report con regole trasparenti. Nessuna analisi automatica del filmato o deduzione causale. Le ipotesi restano tali anche dopo una revisione.")
+    else:
+        section("Piano gara e conformità")
+        p(f"Versione modello stagionale: {data.get('approved_model_version') or 'nessuna'} · hash {data.get('approved_model_hash') or '—'}")
+        p(f"Versione piano approvata: {data.get('approved_plan_version') or 'nessuna'} · hash {data.get('approved_plan_hash') or '—'}")
+        compliance = data.get("compliance", {})
+        denominator = int(compliance.get("denominator", 0))
+        p(f"Campione giudicato: {denominator}; conformi {compliance.get('conforme',0)}/{denominator}; non conformi {compliance.get('non_conforme',0)}/{denominator}; adattamenti {compliance.get('adattamenti',0)}/{denominator}; non valutabili esclusi {compliance.get('non_valutabili',0)}.")
+        for segment in data.get("clock_segments", []):
+            p(f"Tratto cronometro verificato: {segment.get('period')} · video {segment.get('video_start_ms')}–{segment.get('video_end_ms')} ms · gara da {segment.get('game_start_minute')}′ · {segment.get('notes')}")
+        section("Episodi e claims")
+        for event in data.get("events", []):
+            p(f"Osservazione · video {event.get('video_start_ms')}–{event.get('video_end_ms')} ms · minuto gara {event.get('game_minute') if event.get('clock_mapping_verified') else 'non sincronizzato'} · {event.get('description','')} · ID {event.get('id')} · fonte {event.get('source_id') or 'assente'}")
+        if not data.get("events"): p("Nessun episodio verificato.")
+        for claim in data.get("claims", []):
+            p(f"{claim.get('claim_type','?')} · {claim.get('claim_text','')} · confidenza {claim.get('confidence','?')} · revisione {claim.get('review_status','?')} · evento {claim.get('event_id','?')}")
+        principles = {row.get("id"): row for row in data.get("principles", [])}
+        for assessment in data.get("assessments", []):
+            principle = principles.get(assessment.get("principle_id"), {})
+            p(f"Giudizio tattico {assessment.get('plan_compliance')} · qualità tecnica {assessment.get('technical_quality')} · evento {assessment.get('event_id')} · principio {principle.get('title','?')} · pagina PDF {principle.get('pdf_page') or '—'} · {assessment.get('reason','')}")
+        section("Palle inattive")
+        set_pieces = [x for x in data.get("events", []) if x.get("event_type") == "set_piece"]
+        if not set_pieces: p("Nessun piazzato annotato; i movimenti fuori campo non sono inferiti.")
+        for event in set_pieces:
+            p(f"Osservazione · video {event.get('video_start_ms')}–{event.get('video_end_ms')} ms · {event.get('description')} · ID {event.get('id')}")
+        section("Giocatori")
+        highlights = data.get("player_highlights", [])
+        if not highlights: p("Nessun TOP/FLOP con clip e valutazione verificata.")
+        for item in highlights:
+            p(f"{item.get('name')}: TOP {len(item.get('top',[]))}; FLOP {len(item.get('flop',[]))}.")
+            for label in ("top", "flop"):
+                for episode in item.get(label, [])[:3]: p(f"{label.upper()} · {episode.get('description')} · evento {episode.get('event_id')} · video {episode.get('video_start_ms')} ms · clip {episode.get('clip_source_id')} · {episode.get('reason')}")
+        section("Squadra e avversario")
+        for scope,label,limit in (("strength","Forza",3),("weakness","Criticità",3),("opponent_vulnerability","Vulnerabilità avversaria",5)):
+            rows = [x for x in data.get("findings", []) if x.get("scope") == scope and x.get("status") == "confermato"][:limit]
+            if not rows: p(f"{label}: evidenza insufficiente.")
+            for item in rows:
+                refs = [e.get('event_id') for e in data.get('finding_evidence', []) if e.get('finding_id') == item.get('id') and e.get('stance') == 'supports']
+                p(f"{label} · {item.get('title')} · {item.get('violations',0)}/{item.get('observed_opportunities',0)} opportunità · episodi {', '.join(refs) or 'nessuno'} · {item.get('context','')}")
+        section("Impressioni e controevidenze")
+        for item in data.get("impressions", []):
+            p(f"Impressione originale: {item.get('impression_text')}")
+            for review in item.get("impression_reviews", []): p(f"Revisione {review.get('revision')} · {review.get('verdict')} · {review.get('reasoning')}")
+        if not data.get("impressions"): p("Nessuna impressione registrata.")
+        section("Allenamenti e follow-up")
+        for item in data.get("interventions", []): p(f"Proposta: {item.get('exercise')} · obiettivo {item.get('observable_objective')} · svolto {item.get('performed_at') or 'non registrato'}")
+        for item in data.get("followups", []): p(f"Verifica partita {item.get('target_match_id') or 'da assegnare'} · {item.get('verdict') or 'in attesa'}")
+        decision_story = [Paragraph("Decisioni approvate dallo staff", styles["ReportSection"])]
+        approved_decisions = [x for x in data.get("decisions", []) if x.get("decision_briefings", {}).get("status") == "approved"]
+        latest = max((x.get("decision_briefings", {}).get("created_at", "") for x in approved_decisions), default="")
+        decisions = sorted((x for x in approved_decisions if x.get("decision_briefings", {}).get("created_at", "") == latest), key=lambda x: x.get("position", 0))[:3]
+        if not decisions: decision_story.append(Paragraph("Nessuna decisione approvata con evidenze sufficienti.", styles["ReportBody"]))
+        for item in decisions:
+            line = f"{item.get('position')}. {item.get('decision_text')} · Pro: {item.get('supporting_evidence')} · Contro: {item.get('contrary_evidence') or 'non registrate'} · Confidenza: {item.get('confidence_reason')} · Verifica: {item.get('next_match_check')}"
+            decision_story.append(Paragraph(escape(line),styles["ReportBody"]))
+        story.append(KeepTogether(decision_story))
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = SimpleDocTemplate(str(path), pagesize=(21*cm,29.7*cm), rightMargin=1.6*cm, leftMargin=1.6*cm, topMargin=1.6*cm, bottomMargin=1.6*cm, title="Viceallenatore AI - rapporto tattico")

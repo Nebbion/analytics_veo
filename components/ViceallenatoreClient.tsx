@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient } from '../lib/supabase/browser';
 import eventContract from '../docs/viceallenatore/event-contract.json';
+import { importTacticalBundle } from '../lib/viceallenatore/bundle';
 
 type Match = { match_id: string; data: string | null; partita: string };
 type Row = Record<string, any>;
-type Bundle = { schema_version: string; match_id: string; sources: Row[]; events: Row[] };
 
 const supabase = createClient();
 const text = (value: unknown) => String(value ?? '');
@@ -24,8 +24,8 @@ function eventToRow(event: Row, actor: string) {
   return { id:event.event_id, match_id:event.match_id, event_schema_version:event.schema_version, analysis_pipeline_version:event.analysis_pipeline_version ?? 'manual-1', source_id:event.source_refs[0]?.source_id ?? null, video_start_ms:event.video_start_ms, video_end_ms:event.video_end_ms, game_minute:event.game_clock?.minute ?? null, game_stoppage:event.game_clock?.stoppage ?? null, clock_mapping_verified:Boolean(event.game_clock?.mapping_verified), period:event.period, event_type:event.event_type, phase:event.phase, zone:event.zone ?? null, player_id:event.player_ids?.[0] ?? null, observability:event.observability, relevance:event.relevance, description:event.claims[0]?.text ?? 'Evento senza descrizione', created_by:actor };
 }
 
-export function ViceallenatoreClient({ matches, matchError }: { matches: Match[]; matchError: string | null }) {
-  const [matchId, setMatchId] = useState(matches[0]?.match_id ?? '');
+export function ViceallenatoreClient({ matches, matchError, initialMatchId }: { matches: Match[]; matchError: string | null; initialMatchId?: string }) {
+  const [matchId, setMatchId] = useState(initialMatchId ?? matches[0]?.match_id ?? '');
   const [sources, setSources] = useState<Row[]>([]);
   const [players, setPlayers] = useState<Row[]>([]);
   const [evidence, setEvidence] = useState<Row[]>([]);
@@ -145,46 +145,7 @@ export function ViceallenatoreClient({ matches, matchError }: { matches: Match[]
 
   async function importBundle(file: File) {
     if (file.size > 10 * 1024 * 1024) throw new Error('Bundle oltre 10 MB.');
-    const bundle = JSON.parse(await file.text()) as Bundle;
-    if (bundle.schema_version !== '1.0.0' || bundle.match_id !== matchId || !Array.isArray(bundle.sources) || !Array.isArray(bundle.events)) throw new Error('Versione o partita del bundle non corrispondente.');
-    const actor = await userId();
-    const sourceIdMap = new Map<string,string>();
-    for (const source of bundle.sources) {
-      if (source.local_path || source.path || source.match_id !== matchId || !/^[a-f0-9]{64}$/.test(text(source.sha256))) throw new Error('Fonte non valida o path locale nel bundle.');
-      const known = sources.find(s => s.id === source.id || s.sha256 === source.sha256);
-      if (known) {
-        if (known.sha256 !== source.sha256) throw new Error('ID fonte già usato per un file differente.');
-        sourceIdMap.set(source.id,known.id);
-        continue;
-      }
-      const { error } = await supabase.from('analysis_sources').upsert({ id: source.id, match_id: matchId, provider: source.provider, kind: source.kind, filename: source.filename, sha256: source.sha256, size_bytes: source.size_bytes, duration_ms: source.metadata?.duration_ms ?? null, width: source.metadata?.width ?? null, height: source.metadata?.height ?? null, source_limits: source.metadata?.notice ?? null, extracted_metadata: source.metadata ?? {}, imported_by: actor }, { onConflict: 'id' });
-      check(error);
-      sourceIdMap.set(source.id,source.id);
-    }
-    for (const event of bundle.events) {
-      validateEvent(event,matchId);
-      const mapped: Row = {...event,source_refs:event.source_refs.map((ref: Row) => ({...ref,source_id:sourceIdMap.get(ref.source_id) ?? ref.source_id}))};
-      const existing = events.find(e => e.id === event.event_id);
-      if (existing) {
-        if (existing.source_id !== mapped.source_refs[0]?.source_id || existing.video_start_ms !== mapped.video_start_ms || existing.video_end_ms !== mapped.video_end_ms || existing.description !== mapped.claims[0]?.text) throw new Error('Evento già importato ma differente: revisione manuale necessaria.');
-        continue;
-      }
-      const { error } = await supabase.from('match_tactical_events').insert(eventToRow(mapped,actor));
-      check(error);
-      if (event.claims[0]) {
-        const claim = event.claims[0];
-        const result = await supabase.from('tactical_claims').upsert({id:event.event_id,event_id:event.event_id,claim_type:claim.type,claim_text:claim.text,confidence:claim.confidence,evidence_quality:claim.evidence_quality,observability:event.observability,review_status:claim.review_status,created_by:actor},{onConflict:'id'}); check(result.error);
-        const sourceId = mapped.source_refs[0]?.source_id;
-        if (sourceId) { const link = await supabase.from('claim_evidence').upsert({claim_id:event.event_id,source_id:sourceId,stance:'context'},{onConflict:'claim_id,source_id'}); check(link.error); }
-      }
-    }
-    for (const source of bundle.sources.filter(s => s.kind === 'clip')) {
-      const localEvents = bundle.events.map(e => ({id:e.event_id,source_id:sourceIdMap.get(e.source_refs?.[0]?.source_id) ?? e.source_refs?.[0]?.source_id,video_start_ms:e.video_start_ms,video_end_ms:e.video_end_ms}));
-      const matching = [...events,...localEvents].filter(e => e.source_id === (sourceIdMap.get(source.metadata?.origin_source_id) ?? source.metadata?.origin_source_id) && e.video_start_ms === source.metadata?.start_ms && e.video_end_ms === source.metadata?.end_ms);
-      for (const event of matching) {
-        const { error } = await supabase.from('event_evidence').upsert({ event_id:event.id, source_id:sourceIdMap.get(source.id) ?? source.id, stance:'supports', start_ms:source.metadata.start_ms, end_ms:source.metadata.end_ms }, { onConflict:'event_id,source_id' }); check(error);
-      }
-    }
+    await importTacticalBundle(JSON.parse(await file.text()), supabase, await userId(), matchId, sources, events);
   }
 
   async function createPlan() {

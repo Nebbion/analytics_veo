@@ -1,4 +1,24 @@
-# Uso quotidiano del Viceallenatore AI
+# Uso quotidiano · Importa → Analizza → Revisiona
+
+La schermata iniziale riutilizza partita, rosa, distinta, eventi e statistiche da Analytics. Non è necessario reinserire questi dati o configurare un piano specifico per ogni partita.
+
+1. Apri il launcher e scegli **1**, oppure avvia `npm run dev`, quindi accedi come STAFF a `/viceallenatore`.
+2. **Importa**: scegli una partita esistente. La schermata mostra ciò che è già disponibile e propone solo report integrativi mancanti. Puoi selezionare direttamente i file MHTML Veo/YouCoach; vengono decodificati nel browser, senza esecuzione HTML o JavaScript, e si salvano solo hash e metadati estratti. Il bundle JSON rimane compatibile per video, PDF e annotazioni del motore locale. I duplicati sono riconosciuti dal checksum.
+3. **Analizza**: la bozza viene composta dai dati disponibili con regole trasparenti, senza un servizio AI esterno. Distingue fatti documentati, interpretazioni e ipotesi, con fonti. Un valore assente non viene sostituito da zero; un valore zero esplicitamente presente nel DB viene descritto come dato registrato. Non inferisce cause tattiche dagli aggregati.
+4. **Revisiona**: la coda contiene conflitti e verifiche importanti. Puoi consolidare un minuto ambiguo, correggere un testo o scartare una proposta. Le altre osservazioni documentate non richiedono conferma. Puoi rinviare qualsiasi punto aperto.
+5. Il **modello stagionale** è in un pannello richiudibile: descrivilo una volta in testo libero e approva. Si riutilizza automaticamente per stagione; se esistono più modelli, scegli quello della stagione una sola volta. Ogni modifica crea una versione approvata nuova. Non serve un PDF partita per usare il modello o generare la bozza.
+6. Le correzioni e revisioni sono salvate con il testo originale e le fonti. Si riapplicano automaticamente alla stessa evidenza invariata; se cambia l'evidenza, il punto torna da verificare. Le revisioni delle altre partite della stagione compaiono come memoria consultabile, senza trasformarsi in fatti della partita corrente.
+7. Esporta la bozza in JSON e usa il menu **6** del launcher per il PDF. Il report conserva tipi di affermazione, fonti, correzioni e stato di revisione; omette sezioni opzionali prive di evidenze.
+
+Piano gara specifico, TOP/FLOP, sincronizzazione video, episodi e allenamenti sono in **Strumenti facoltativi**. L'analisi automatica del video resta una fase successiva.
+
+Per attivare salvataggio bozze e memoria applica anche `supabase/migrations/20261121120000_viceallenatore_zero_entry.sql` al database di sviluppo dopo la migration di fase 1. La nuova migration aggiunge impostazione stagionale, bozze e revisioni; non modifica i dati Analytics esistenti. In assenza delle nuove tabelle la lettura dei dati disponibili e l'esportazione funzionano, mentre il salvataggio segnala l'errore.
+
+---
+
+## Riferimento per gli strumenti facoltativi
+
+### Configurazione del motore locale del Viceallenatore AI
 
 ## Preparazione
 
