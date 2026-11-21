@@ -18,3 +18,7 @@ La misurazione usa `/usr/bin/time -l` e un'estrazione di cinque minuti dal video
 Il proxy completo è stato creato e verificato con `ffprobe`: H.264/AAC, 1920×1080, 6907,868 s, **1.270.645.271 byte**. La sua esecuzione non è stata avviata sotto un cronometro di benchmark, quindi non riporto un tempo preciso. Una clip tecnica dei primi 10 s è stata estratta dall'originale e verificata con `ffprobe`: durata 10,010 s, 5.648.785 byte. La clip prova l'elaborazione del file, non è un episodio tattico annotato.
 
 PyTorch non è installato: nessun benchmark MPS o di riconoscimento tattico è stato eseguito. Il flusso attuale indicizza, crea proxy e clip; le conclusioni tattiche richiedono annotazione e revisione staff.
+
+## Primo prototipo corner · 21 novembre 2026
+
+Rilevamento persone CPU con Faster R-CNN MobileNetV3 Large FPN: 461 fotogrammi dell'intera gara, un campione ogni 15 s, elaborati in 122,18 s. Sono stati proposti 57 raggruppamenti da verificare, non 57 corner. Nessuna accuratezza di riconoscimento corner o conformità tattica è stata stimata. Dettagli, dipendenze e limiti in [corner-prototype.md](corner-prototype.md).
