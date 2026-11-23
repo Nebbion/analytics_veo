@@ -60,6 +60,8 @@ type DisciplineEvent = {
   playerId: string;
   playerName: string;
   type: 'YELLOW_CARD' | 'SECOND_YELLOW_CARD' | 'RED_CARD';
+  reason: string | null;
+  countsTowardAccumulation: boolean;
   minute: number;
   injuryTime: boolean;
 };
@@ -477,7 +479,7 @@ function TacticalPitch({ title, points, mode, selectedId, onSelect }: { title: s
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
-  const [selected, setSelected] = useState('');
+  const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [view, setView] = useState<'home' | 'player' | 'team' | 'goalkeepers' | 'minutes' | 'tactics' | 'compare'>('home');
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
@@ -495,7 +497,7 @@ export default function Home() {
         setView('home');
         const first = json.players?.[0];
         const second = json.players?.[1];
-        if (first) setSelected(first.name);
+        if (first) setSelectedPlayerId(first.playerId);
         if (first) setCompareA(first.name);
         if (second) setCompareB(second.name);
         setTacticalPlayerId('ALL');
@@ -503,6 +505,7 @@ export default function Home() {
       .catch(e => setError(e.message));
   }, []);
 
+  const isStaff = data?.role === 'STAFF';
   const players = data?.players ?? [];
   const matches = data?.matches ?? [];
   const teamPlayers = data?.teamPlayers ?? players;
@@ -513,12 +516,15 @@ export default function Home() {
     unattributedGoals: { total: 0, campionato: 0, coppa: 0 },
   };
   const tactics = data?.tactics ?? { averagePositions: [], shots: [], tackles: [], source: 'none' as const };
-  const player = useMemo(() => players.find(p => p.name === selected), [players, selected]);
-  const playerMatches = useMemo(() => matches.filter(m => m.playerName === selected).sort((a,b) => a.date.localeCompare(b.date)), [matches, selected]);
+  const profilePlayerId = isStaff ? selectedPlayerId : data?.playerId;
+  const player = players.find(p => p.playerId === profilePlayerId);
+  const playerMatches = useMemo(() => matches
+    .filter(m => m.playerId === profilePlayerId)
+    .sort((a, b) => a.date.localeCompare(b.date)), [matches, profilePlayerId]);
   const generalPlayerMatches = useMemo(() => teamMatches.map(g => ({
     ...g,
-    stats: matches.find(m => m.matchId === g.matchId) ?? null,
-  })), [teamMatches, matches]);
+    stats: playerMatches.find(m => m.matchId === g.matchId) ?? null,
+  })), [teamMatches, playerMatches]);
   const playerCompetitionStats = useMemo(() => {
     const createStats = (label: 'Campionato' | 'Coppa') => ({
       label,
@@ -878,19 +884,19 @@ export default function Home() {
       <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
       <button className={view === 'player' ? 'active' : ''} onClick={() => setView('player')}>Giocatore</button>
       <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}>Squadra</button>
-      <button className={view === 'goalkeepers' ? 'active' : ''} onClick={() => setView('goalkeepers')}>Portieri</button>
-      {data.role === 'STAFF' && <button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button>}
+      {isStaff && <button className={view === 'goalkeepers' ? 'active' : ''} onClick={() => setView('goalkeepers')}>Portieri</button>}
+      {isStaff && <button className={view === 'minutes' ? 'active' : ''} onClick={() => setView('minutes')}>Minuti</button>}
       <button className={view === 'tactics' ? 'active' : ''} onClick={() => setView('tactics')}>Tattica</button>
-      {data.role === 'STAFF' && <a className="vaNav" href="/viceallenatore">Analisi tattica / Viceallenatore AI</a>}
-      {data.role === 'STAFF' && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
+      {isStaff && <a className="vaNav" href="/viceallenatore">Analisi tattica / Viceallenatore AI</a>}
+      {isStaff && <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Confronto</button>}
     </nav>
 
     {view === 'home' && <ChampionshipDashboard matches={teamMatches} playerStats={teamStats} disciplineEvents={data.disciplineEvents ?? []} />}
 
-    {view === 'goalkeepers' && <GoalkeeperDashboard stats={goalkeeperStats} />}
+    {view === 'goalkeepers' && isStaff && <GoalkeeperDashboard stats={goalkeeperStats} />}
 
     {view === 'player' && <>
-      <section className="hero"><div><p className="eyebrow">PLAYER CENTER</p><h1>{data.role === 'GIOCATORE' ? 'Profilo personale' : 'Dashboard giocatore'}</h1><p>{data.role === 'GIOCATORE' ? 'Le tue statistiche stagionali e tutte le partite della squadra.' : 'Statistiche stagionali e rendimento partita per partita.'}</p></div>{data.role === 'STAFF' && <label className="selector">Giocatore<select value={selected} onChange={e => setSelected(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label>}</section>
+      <section className="hero"><div><p className="eyebrow">PLAYER CENTER</p><h1>{isStaff ? 'Dashboard giocatore' : 'Profilo personale'}</h1><p>{isStaff ? 'Statistiche stagionali e rendimento partita per partita.' : 'Le tue statistiche stagionali e tutte le partite della squadra.'}</p></div>{isStaff && <label className="selector">Giocatore<select value={selectedPlayerId} onChange={e => setSelectedPlayerId(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.playerId}>{p.name}</option>)}</select></label>}</section>
       {player && <>
         <section className="profile panel"><div><span className="eyebrow">PROFILO</span><h2>{player.name}</h2><p>{player.appearances} presenze · {int(player.minutes)} minuti</p></div><div className="profileHighlight"><span>GOL / 90</span><strong>{fmt(player.goalsPer90, 2)}</strong></div></section>
         <section className="statsGrid">
@@ -999,7 +1005,7 @@ export default function Home() {
       <div className="singleCol"><RankTable title="Gol / 90" metricLabel="indicatore" rows={rankings.goals90} /></div>
     </>}
 
-    {view === 'minutes' && data.role === 'STAFF' && <>
+    {view === 'minutes' && isStaff && <>
       <section className="hero"><div><p className="eyebrow">STAFF MINUTES</p><h1>Minuti giocatori</h1><p>Tutti i giocatori ordinati per minuti totali, con il dettaglio partita per partita.</p></div><div className="heroMeta"><span>Partite</span><strong>{teamMatches.length}</strong></div></section>
       <section className="panel tablePanel minutesPanel">
         <div className="sectionTitle"><div><span className="eyebrow">ROSA</span><h2>Distribuzione minuti</h2></div><span>{minutesRows.length} giocatori</span></div>
@@ -1073,7 +1079,7 @@ export default function Home() {
       </section>
     </>}
 
-    {view === 'compare' && data.role === 'STAFF' && <>
+    {view === 'compare' && isStaff && <>
       <section className="hero"><div><p className="eyebrow">PLAYER COMPARE</p><h1>Confronto giocatori</h1><p>Confronto diretto sugli stessi indicatori stagionali.</p></div></section>
       <section className="compareSelectors panel"><label className="selector">Giocatore A<select value={compareA} onChange={e => setCompareA(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label><span className="versus">VS</span><label className="selector">Giocatore B<select value={compareB} onChange={e => setCompareB(e.target.value)}>{players.map(p => <option key={p.playerId} value={p.name}>{p.name}</option>)}</select></label></section>
       {a && b && <section className="compareGrid">

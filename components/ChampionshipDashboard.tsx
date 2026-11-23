@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { ChampionshipCalendar } from './ChampionshipCalendar';
+import { isProtestCardReason } from '../lib/match-discipline';
 
 type ChampionshipMatch = {
   matchId: string;
@@ -38,6 +39,8 @@ type ChampionshipDisciplineEvent = {
   playerId: string;
   playerName: string;
   type: 'YELLOW_CARD' | 'SECOND_YELLOW_CARD' | 'RED_CARD';
+  reason: string | null;
+  countsTowardAccumulation: boolean;
   minute: number;
   injuryTime: boolean;
 };
@@ -198,6 +201,7 @@ function SeasonalRanking({ title, rows }: { title: string; rows: { name: string;
 }
 
 export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }: { matches: ChampionshipMatch[]; playerStats: ChampionshipPlayerStat[]; disciplineEvents: ChampionshipDisciplineEvent[] }) {
+  const [protestsOnly, setProtestsOnly] = useState(false);
   const championshipMatches = matches
     .filter(match => match.competition === 'CAMPIONATO' && match.outcome !== null)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -240,8 +244,15 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
     );
   const yellowEventsByPlayer = new Map<string, ChampionshipDisciplineEvent[]>();
 
-  championshipDisciplineEvents
-    .filter(event => event.type === 'YELLOW_CARD' || event.type === 'SECOND_YELLOW_CARD')
+  const validYellowEvents = championshipDisciplineEvents.filter(event => event.countsTowardAccumulation);
+  const protestEvents = validYellowEvents.filter(event => isProtestCardReason(event.reason));
+  const protestCountByPlayer = new Map<string, number>();
+  protestEvents.forEach(event => {
+    const key = event.playerId || event.playerName;
+    protestCountByPlayer.set(key, (protestCountByPlayer.get(key) ?? 0) + 1);
+  });
+
+  validYellowEvents
     .forEach(event => {
       const key = event.playerId || event.playerName;
       const current = yellowEventsByPlayer.get(key) ?? [];
@@ -257,7 +268,7 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
     disciplineProgress.set(playerId, calculation.progress);
     calculation.suspensionByEvent.forEach((value, key) => suspensionByEvent.set(key, value));
   });
-  const disciplineHistory = [...championshipDisciplineEvents].reverse();
+  const disciplineHistory = [...(protestsOnly ? protestEvents : championshipDisciplineEvents)].reverse();
   const production = new Map<string, { name: string; goals: number; penaltyGoals: number; freeKickGoals: number; assists: number }>();
 
   playerStats.filter(stat => stat.competition === 'CAMPIONATO').forEach(stat => {
@@ -348,6 +359,7 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
           {bookedPlayers.length ? bookedPlayers.map((player, index) => {
             const progress = disciplineProgress.get(player.playerId || player.name);
             const historyComplete = progress ? progress.historyCount === player.yellowCards : false;
+            const protestCount = protestCountByPlayer.get(player.playerId || player.name) ?? 0;
 
             return <div className="homeDisciplineRow" key={player.playerId || player.name}>
               <span className="rankNo">{index + 1}</span>
@@ -358,6 +370,7 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
                   {progress.suspensions > 0 ? ` · ${progress.suspensions} ${progress.suspensions === 1 ? 'giornata maturata' : 'giornate maturate'}` : ''}
                   {!historyComplete ? ' · storico parziale' : ''}
                 </small> : <small>Storico eventi non disponibile</small>}
+                {protestCount > 0 && <small>{number(protestCount)} per proteste</small>}
               </div>
               <span className="disciplineCount yellowCount">{player.yellowCards}</span>
             </div>;
@@ -380,22 +393,23 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
         <div><span className="eyebrow">DISCIPLINA</span><h2>Storico cartellini</h2></div>
         <span>{disciplineHistory.length} eventi · solo campionato</span>
       </div>
-      <p className="disciplineRuleNote">Progressione ammonizioni: 5 → 5 → 4 → 3 → 2 → 1. Al raggiungimento della soglia il conteggio riparte da zero; dalla soglia 1 ogni ammonizione matura una giornata di squalifica.</p>
+      <p className="disciplineRuleNote">Progressione ammonizioni: 5 → 5 → 4 → 3 → 2 → 1. Al raggiungimento della soglia il conteggio riparte da zero. I due gialli di un’espulsione per doppia ammonizione sono esclusi dal cumulo.</p>
+      <label><input type="checkbox" checked={protestsOnly} onChange={event => setProtestsOnly(event.target.checked)} /> Solo ammonizioni valide per proteste ({number(protestEvents.length)})</label>
       {disciplineHistory.length ? <div className="tableWrap"><table className="disciplineHistoryTable">
-        <thead><tr><th>Data</th><th>Partita</th><th>Giocatore</th><th>Cartellino</th><th>Minuto</th><th>Effetto</th></tr></thead>
+        <thead><tr><th>Data</th><th>Partita</th><th>Giocatore</th><th>Cartellino</th><th>Motivazione</th><th>Minuto</th><th>Effetto</th></tr></thead>
         <tbody>{disciplineHistory.map((event, index) => {
           const suspensionNumber = suspensionByEvent.get(disciplineEventKey(event));
           const cardLabel = event.type === 'YELLOW_CARD'
             ? 'Ammonizione'
             : event.type === 'SECOND_YELLOW_CARD'
-              ? 'Seconda ammonizione'
-              : 'Espulsione';
-          const effect = suspensionNumber
-            ? `${event.type === 'SECOND_YELLOW_CARD' ? 'Espulsione + ' : ''}1 giornata maturata per cumulo (n° ${suspensionNumber})`
-            : event.type === 'SECOND_YELLOW_CARD'
               ? 'Espulsione per doppia ammonizione'
-              : event.type === 'RED_CARD'
-                ? 'Espulsione diretta'
+              : 'Espulsione diretta';
+          const effect = suspensionNumber
+            ? `1 giornata maturata per cumulo (n° ${suspensionNumber})`
+            : event.type === 'SECOND_YELLOW_CARD'
+              ? 'Secondo giallo escluso dal cumulo'
+              : event.type === 'YELLOW_CARD' && !event.countsTowardAccumulation
+                ? 'Esclusa dal cumulo per doppia ammonizione'
                 : '—';
 
           return <tr key={`${disciplineEventKey(event)}-${index}`}>
@@ -403,11 +417,12 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
             <td><a href={`/matches/${encodeURIComponent(event.matchId)}`}>{event.match}</a></td>
             <td><strong>{event.playerName}</strong></td>
             <td><span className={`disciplineEventBadge ${event.type === 'YELLOW_CARD' ? 'yellow' : 'red'}`}>{cardLabel}</span></td>
+            <td>{event.reason ?? '—'}</td>
             <td>{event.minute}&apos;{event.injuryTime ? ' rec.' : ''}</td>
             <td>{effect}</td>
           </tr>;
         })}</tbody>
-      </table></div> : <p className="rankEmpty">Nessun evento cartellino dettagliato disponibile dai report YouCoach.</p>}
+      </table></div> : <p className="rankEmpty">{protestsOnly ? 'Nessuna ammonizione valida per proteste nei report importati.' : 'Nessun evento cartellino dettagliato disponibile dai report YouCoach.'}</p>}
     </section>
   </>;
 }

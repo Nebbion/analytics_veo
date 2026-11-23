@@ -26,17 +26,25 @@ var YOUCOACH_SUBSTITUTIONS_HEADERS = [
 ];
 var YOUCOACH_EVENTS_HEADERS = [
   'Match_ID', 'Event_Type', 'Minuto', 'Recupero', 'Player_ID', 'Giocatore',
-  'Related_Player_ID', 'Giocatore_Related', 'Fonte', 'Tipo_Gol'
+  'Related_Player_ID', 'Giocatore_Related', 'Fonte', 'Tipo_Gol', 'Motivazione_Cartellino'
 ];
 
-function youCoachOfficialEventType_(value) {
+function youCoachOfficialEventType_(value, doubleYellowCard) {
   var type = youCoachNormalize_(value).replace(/[ -]+/g, '_');
   if (type === 'GOAL' || type === 'GOL') return 'GOAL';
   if (type === 'OPPONENT_GOAL' || type === 'GOL_SUBITO') return 'OPPONENT_GOAL';
   if (type === 'SECOND_YELLOW_CARD' || type === 'SECONDA_AMMONIZIONE') return 'SECOND_YELLOW_CARD';
   if (type === 'YELLOW_CARD' || type === 'AMMONIZIONE') return 'YELLOW_CARD';
-  if (type === 'RED_CARD' || type === 'ESPULSIONE') return 'RED_CARD';
+  if (type === 'RED_CARD' || type === 'ESPULSIONE') {
+    return /^(true|1)$/i.test(String(doubleYellowCard).trim()) ? 'SECOND_YELLOW_CARD' : 'RED_CARD';
+  }
   return '';
+}
+
+function youCoachCardReason_(event, type) {
+  if (['YELLOW_CARD', 'SECOND_YELLOW_CARD', 'RED_CARD'].indexOf(type) === -1) return '';
+  var reason = youCoachText_(event.cardReason || event.notes);
+  return reason || (type === 'RED_CARD' ? '' : 'Fallo');
 }
 
 function youCoachGoalType_(event) {
@@ -123,7 +131,7 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
   var officialEventRows = [];
   var seenOfficialEvents = {};
   events.forEach(function(event) {
-    var eventType = youCoachOfficialEventType_(event && event.tipo);
+    var eventType = youCoachOfficialEventType_(event && event.tipo, event && event.double_yellow_card);
     var isOpponentGoal = eventType === 'GOAL' && (
       event.avversario === true || event.avversario === 1 ||
       String(event.avversario).toLowerCase() === 'true' ||
@@ -131,6 +139,7 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
     );
     if (isOpponentGoal) eventType = 'OPPONENT_GOAL';
     if (!eventType) return;
+    if (/^(YELLOW_CARD|SECOND_YELLOW_CARD|RED_CARD)$/.test(eventType) && event.avversario) return;
 
     var playerName = youCoachText_(event.giocatore);
     var relatedPlayerName = eventType === 'GOAL' ? youCoachText_(event.giocatore2) : '';
@@ -160,7 +169,8 @@ function salvaYouCoachLineupsESostituzioni_(matchId, info, playerIdByName) {
       relatedPlayerId,
       relatedPlayerName,
       'YOUCOACH',
-      goalType
+      goalType,
+      youCoachCardReason_(event, eventType)
     ]);
   });
 
@@ -175,6 +185,10 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_() {
   var substitutions = youCoachReadObjects_(spreadsheet, YOUCOACH_SUBSTITUTIONS_SHEET);
   var officialEvents = youCoachReadObjects_(spreadsheet, YOUCOACH_EVENTS_SHEET);
   var matchIds = {};
+
+  if (officialEvents.length) {
+    youCoachSupabaseRequest_('get', 'match_events?select=card_reason&limit=1');
+  }
 
   lineups.forEach(function(row) {
     if (row.Match_ID) matchIds[String(row.Match_ID)] = true;
@@ -224,7 +238,8 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_() {
           related_player_id: youCoachText_(row.Related_Player_ID) || null,
           related_player_name: youCoachText_(row.Giocatore_Related) || null,
           fonte: youCoachText_(row.Fonte) || 'YOUCOACH',
-          goal_type: youCoachText_(row.Tipo_Gol) || null
+          goal_type: youCoachText_(row.Tipo_Gol) || null,
+          card_reason: youCoachText_(row.Motivazione_Cartellino) || null
         };
       });
 

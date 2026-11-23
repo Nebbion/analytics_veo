@@ -2567,6 +2567,7 @@ function creaAnalisiPartite() {
 
   const youcoachSheet =
     ss.getSheetByName('YOUCOACH_STATS');
+  const doubleYellowKeys = youCoachDoubleYellowKeys_(ss);
 
   const veoReportSheet =
     ss.getSheetByName('VEO_REPORT_STATS');
@@ -2806,12 +2807,12 @@ function creaAnalisiPartite() {
             ),
 
           ammonizioni:
-            Number(
+            doubleYellowKeys.has(key) ? 0 : Number(
               row[yIdx.Ammonizioni] || 0
             ),
 
           espulsioni:
-            Number(
+            doubleYellowKeys.has(key) ? 1 : Number(
               row[yIdx.Espulsioni] || 0
             )
 
@@ -4019,6 +4020,7 @@ function snapshotImport_(ss) {
     lineups: contaRigheDati_(ss, 'YOUCOACH_LINEUPS'),
     substitutions: contaRigheDati_(ss, 'YOUCOACH_SUBSTITUTIONS'),
     officialEvents: contaRigheDati_(ss, 'YOUCOACH_EVENTS'),
+    doubleYellowKeys: [...youCoachDoubleYellowKeys_(ss)].sort().join('\n'),
     veoMatches: contaRigheDati_(ss, 'VEO_MATCHES'),
     veoRaw: contaRigheDati_(ss, 'VEO_RAW'),
     playerStats: contaRigheDati_(ss, 'PLAYER_STATS'),
@@ -4254,7 +4256,7 @@ function sincronizzaSupabaseIncrementale() {
   const remoteStats = supabaseGet_(
     supabaseUrl,
     supabaseKey,
-    'player_match_stats?select=match_id,player_id'
+    'player_match_stats?select=match_id,player_id,ammonizioni,espulsioni'
   );
 
   const remoteStatsKeys = new Set(
@@ -4558,13 +4560,14 @@ function sincronizzaSupabaseIncrementale() {
         related_player_id: String(row.Related_Player_ID || '').trim() || null,
         related_player_name: String(row.Giocatore_Related || '').trim() || null,
         fonte: String(row.Fonte || 'YOUCOACH').trim(),
-        goal_type: String(row.Tipo_Gol || '').trim() || null
+        goal_type: String(row.Tipo_Gol || '').trim() || null,
+        card_reason: String(row.Motivazione_Cartellino || '').trim() || null
       }));
 
     const remoteOfficialEvents = supabaseGet_(
       supabaseUrl,
       supabaseKey,
-      'match_events?select=match_id,event_type,minuto,player_id,related_player_id,goal_type'
+      'match_events?select=id,match_id,event_type,minuto,player_id,related_player_id,goal_type,card_reason'
     );
 
     const officialEventKey = row => [
@@ -4582,19 +4585,27 @@ function sincronizzaSupabaseIncrementale() {
       ])
     );
 
-    nuoviEventiUfficiali = localOfficialEvents.filter(row =>
-      !remoteOfficialEventsByKey.has(officialEventKey(row))
-    );
+    localOfficialEvents.forEach(row => {
+      const current = remoteOfficialEventsByKey.get(officialEventKey(row));
+      // Prima della lettura della spunta, il secondo giallo era salvato come rosso.
+      const legacyRed = row.event_type === 'SECOND_YELLOW_CARD'
+        ? remoteOfficialEventsByKey.get(officialEventKey({ ...row, event_type: 'RED_CARD' }))
+        : null;
+      const remoteRow = current || legacyRed;
+      if (!remoteRow) {
+        nuoviEventiUfficiali.push(row);
+        return;
+      }
 
-    eventiUfficialiDaAggiornare = localOfficialEvents.filter(row => {
-      const remoteRow = remoteOfficialEventsByKey.get(
-        officialEventKey(row)
-      );
-
-      if (!remoteRow) return false;
-
-      return String(remoteRow.goal_type || '').trim() !==
-        String(row.goal_type || '').trim();
+      const cardReason = row.card_reason ?? remoteRow.card_reason;
+      if (remoteRow.event_type !== row.event_type ||
+          remoteRow.goal_type !== row.goal_type ||
+          remoteRow.card_reason !== cardReason) {
+        eventiUfficialiDaAggiornare.push({
+          id: remoteRow.id,
+          changes: { event_type: row.event_type, goal_type: row.goal_type, card_reason: cardReason }
+        });
+      }
     });
 
     if (nuoviEventiUfficiali.length) {
@@ -4606,28 +4617,28 @@ function sincronizzaSupabaseIncrementale() {
       );
     }
 
-    eventiUfficialiDaAggiornare.forEach(row => {
-      const playerFilter = row.player_id
-        ? 'player_id=eq.' + encodeURIComponent(row.player_id)
-        : 'player_id=is.null';
-      const relatedPlayerFilter = row.related_player_id
-        ? 'related_player_id=eq.' + encodeURIComponent(row.related_player_id)
-        : 'related_player_id=is.null';
-
-      const filter = [
-        'match_id=eq.' + encodeURIComponent(row.match_id),
-        'event_type=eq.' + encodeURIComponent(row.event_type),
-        'minuto=eq.' + encodeURIComponent(row.minuto),
-        playerFilter,
-        relatedPlayerFilter
-      ].join('&');
-
+    eventiUfficialiDaAggiornare.forEach(({ id, changes }) => {
       supabasePatch_(
         supabaseUrl,
         supabaseKey,
         'match_events',
-        filter,
-        { goal_type: row.goal_type }
+        'id=eq.' + encodeURIComponent(id),
+        changes
+      );
+    });
+
+    const doubleYellowKeys = new Set(localOfficialEvents
+      .filter(row => row.event_type === 'SECOND_YELLOW_CARD')
+      .map(row => row.match_id + '|' + row.player_id));
+    [...remoteStats, ...nuoveStats].forEach(row => {
+      if (!doubleYellowKeys.has(row.match_id + '|' + row.player_id)) return;
+      if (row.ammonizioni === 0 && row.espulsioni === 1) return;
+      supabasePatch_(
+        supabaseUrl,
+        supabaseKey,
+        'player_match_stats',
+        'match_id=eq.' + encodeURIComponent(row.match_id) + '&player_id=eq.' + encodeURIComponent(row.player_id),
+        { ammonizioni: 0, espulsioni: 1 }
       );
     });
   }
@@ -5601,14 +5612,15 @@ function verificaEventiUfficialiSupabase_(matchId) {
           player_id: String(row.Player_ID || '').trim() || null,
           related_player_id:
             String(row.Related_Player_ID || '').trim() || null,
-          goal_type: String(row.Tipo_Gol || '').trim() || null
+          goal_type: String(row.Tipo_Gol || '').trim() || null,
+          card_reason: String(row.Motivazione_Cartellino || '').trim() || null
         }))
     : [];
 
   const remoteEvents = supabaseGet_(
     supabaseUrl,
     supabaseKey,
-    'match_events?select=match_id,event_type,minuto,player_id,related_player_id,goal_type' +
+    'match_events?select=match_id,event_type,minuto,player_id,related_player_id,goal_type,card_reason' +
       '&match_id=eq.' + encodeURIComponent(targetMatchId)
   );
 
@@ -5646,6 +5658,10 @@ function verificaEventiUfficialiSupabase_(matchId) {
         ', Supabase=' + (remoteRow.goal_type || 'vuoto')
       );
     }
+
+    if (remoteRow.card_reason !== row.card_reason) {
+      errors.push(row.event_type + ' al ' + row.minuto + "': motivazione diversa in Supabase");
+    }
   });
 
   if (errors.length) {
@@ -5670,15 +5686,17 @@ function verificaEventiUfficialiSupabase_(matchId) {
 
 
 function importaReportYouCoach() {
+  const ss = SpreadsheetApp.getActive();
+  const previousDoubleYellows = youCoachDoubleYellowKeys_(ss);
   const risultato = importaReportYouCoachInterno_('');
+  const hasCorrections = [...youCoachDoubleYellowKeys_(ss)].some(key => !previousDoubleYellows.has(key));
 
-  if (risultato && risultato.importate > 0) {
+  if (risultato && (risultato.importate > 0 || hasCorrections)) {
     creaAnalisiPartite();
     creaAnalisiGiocatori();
   }
 
-  // L'azione di menu deve aggiornare anche il sito. In particolare,
-  // il sync incrementale ora corregge Tipo_Gol sugli eventi già esistenti.
+  // Aggiorna anche i dettagli degli eventi già presenti in Supabase.
   sincronizzaSupabaseIncrementale();
 
   return risultato;
@@ -6198,6 +6216,10 @@ function importaReportYouCoachInterno_(matchIdForzato) {
       // EVENTI
       // ==========================================
 
+      const doppioGiallo = new Set(info.eventi
+        .filter(evento => !evento.avversario && evento.tipo === 'second_yellow_card')
+        .map(evento => normalizzaNomeYouCoach_(evento.giocatore)));
+
       info.eventi.forEach(e => {
 
         const tipo =
@@ -6211,6 +6233,9 @@ function importaReportYouCoachInterno_(matchIdForzato) {
             e.giocatore
           );
 
+        if (e.avversario && /^(yellow_card|red_card|second_yellow_card)$/.test(tipo)) {
+          return;
+        }
 
         const nome2 =
           normalizzaNomeYouCoach_(
@@ -6310,7 +6335,7 @@ function importaReportYouCoachInterno_(matchIdForzato) {
         // ======================================
 
         else if (
-          tipo === 'yellow_card'
+          tipo === 'yellow_card' && !doppioGiallo.has(nome1)
         ) {
 
           if (
@@ -6344,8 +6369,11 @@ function importaReportYouCoachInterno_(matchIdForzato) {
             stats[p1.playerId]
           ) {
 
-            stats[p1.playerId]
-              .espulsioni++;
+            if (doppioGiallo.has(nome1)) {
+              stats[p1.playerId].espulsioni = 1;
+            } else {
+              stats[p1.playerId].espulsioni++;
+            }
 
 
             /*
@@ -7047,11 +7075,15 @@ function parseYouCoachMhtml_(html) {
           jsonText
         );
 
+      const officialType = youCoachOfficialEventType_(e.event_type, e.double_yellow_card);
 
       risultato.eventi.push({
 
         tipo:
-          e.event_type || '',
+          officialType === 'SECOND_YELLOW_CARD' ? 'second_yellow_card' : e.event_type || '',
+
+        cardReason:
+          youCoachCardReason_(e, officialType),
 
         tipoGol:
           youCoachGoalType_(e),
@@ -7211,11 +7243,12 @@ var YOUCOACH_EVENTS_HEADERS = [
   'Related_Player_ID',
   'Giocatore_Related',
   'Fonte',
-  'Tipo_Gol'
+  'Tipo_Gol',
+  'Motivazione_Cartellino'
 ];
 
 
-function youCoachOfficialEventType_(value) {
+function youCoachOfficialEventType_(value, doubleYellowCard) {
   const type = String(value || '')
     .trim()
     .toUpperCase()
@@ -7229,8 +7262,22 @@ function youCoachOfficialEventType_(value) {
     return 'SECOND_YELLOW_CARD';
   }
   if (type === 'YELLOW_CARD' || type === 'AMMONIZIONE') return 'YELLOW_CARD';
-  if (type === 'RED_CARD' || type === 'ESPULSIONE') return 'RED_CARD';
+  if (type === 'RED_CARD' || type === 'ESPULSIONE') {
+    return /^(true|1)$/i.test(String(doubleYellowCard).trim()) ? 'SECOND_YELLOW_CARD' : 'RED_CARD';
+  }
   return '';
+}
+
+function youCoachCardReason_(event, type) {
+  if (!['YELLOW_CARD', 'SECOND_YELLOW_CARD', 'RED_CARD'].includes(type)) return '';
+  const reason = String(event.cardReason || event.notes || '').trim();
+  return reason || (type === 'RED_CARD' ? '' : 'Fallo');
+}
+
+function youCoachDoubleYellowKeys_(spreadsheet) {
+  return new Set(youCoachReadObjects_(spreadsheet, YOUCOACH_EVENTS_SHEET)
+    .filter(row => row.Event_Type === 'SECOND_YELLOW_CARD' && row.Player_ID)
+    .map(row => String(row.Match_ID).trim() + '|' + String(row.Player_ID).trim()));
 }
 
 
@@ -7515,7 +7562,8 @@ function salvaYouCoachLineupsESostituzioni_(
 
     let eventType =
       youCoachOfficialEventType_(
-        evento && evento.tipo
+        evento && evento.tipo,
+        evento && evento.double_yellow_card
       );
 
     const isOpponentGoal =
@@ -7532,6 +7580,10 @@ function salvaYouCoachLineupsESostituzioni_(
     }
 
     if (!eventType) {
+      return;
+    }
+
+    if (/^(YELLOW_CARD|SECOND_YELLOW_CARD|RED_CARD)$/.test(eventType) && evento.avversario) {
       return;
     }
 
@@ -7625,7 +7677,8 @@ function salvaYouCoachLineupsESostituzioni_(
       relatedPlayerId,
       relatedPlayer ? relatedPlayer.nome : relatedPlayerName,
       'YOUCOACH',
-      goalType
+      goalType,
+      youCoachCardReason_(evento, eventType)
     ]);
 
   });
@@ -7700,6 +7753,11 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
       ss,
       YOUCOACH_EVENTS_SHEET
     );
+
+  // Verifica la migration prima di sostituire le timeline esistenti.
+  if (officialEvents.length) {
+    supabaseGet_(supabaseUrl, supabaseKey, 'match_events?select=card_reason&limit=1');
+  }
 
   const matchIds = new Set();
 
@@ -7859,7 +7917,9 @@ function sincronizzaYouCoachLineupsESostituzioniSupabase_(
             String(row.Giocatore_Related || '').trim() || null,
           fonte: String(row.Fonte || 'YOUCOACH').trim(),
           goal_type:
-            String(row.Tipo_Gol || '').trim() || null
+            String(row.Tipo_Gol || '').trim() || null,
+          card_reason:
+            String(row.Motivazione_Cartellino || '').trim() || null
         }))
         .filter(row =>
           row.event_type &&

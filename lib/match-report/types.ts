@@ -71,6 +71,8 @@ export type ZoneDistribution = {
 export type MatchReportEvent = {
   type: 'goal' | 'concededGoal' | 'assist' | 'yellowCard' | 'redCard';
   goalType: 'RIGORE' | 'PUNIZIONE' | null;
+  cardReason: string | null;
+  excludedFromAccumulation: boolean;
   label: string;
   playerName: string;
   playerId: string;

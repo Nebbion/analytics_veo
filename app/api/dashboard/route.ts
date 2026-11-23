@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '../../../lib/supabase/server';
+import { doubleYellowExpulsions, withCanonicalDismissals } from '../../../lib/match-discipline';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -62,6 +63,7 @@ type OfficialEventRow = {
   player_name: string;
   event_type: string;
   goal_type: string | null;
+  card_reason?: string | null;
   minuto: number;
   recupero: boolean;
 };
@@ -627,7 +629,7 @@ export async function GET() {
       .select('match_id,minuto,recupero,player_out_id,player_in_id'),
     supabase
       .from('match_events')
-      .select('match_id,player_id,player_name,event_type,goal_type,minuto,recupero'),
+      .select('*'),
   ]);
 
   if (playersResult.error) {
@@ -665,7 +667,8 @@ export async function GET() {
   // La dashboard resta disponibile anche prima dell'esecuzione manuale della migration.
   const allLineups = lineupsResult.error ? [] : (lineupsResult.data ?? []) as LineupRow[];
   const allSubstitutions = substitutionsResult.error ? [] : (substitutionsResult.data ?? []) as SubstitutionRow[];
-  const allOfficialEvents = officialEventsResult.error ? [] : (officialEventsResult.data ?? []) as OfficialEventRow[];
+  const allOfficialEvents = withCanonicalDismissals((officialEventsResult.data ?? []) as OfficialEventRow[]);
+  const hasDoubleYellow = doubleYellowExpulsions(allOfficialEvents);
   const allOfficialGoals = allOfficialEvents.filter(
     (row): row is OfficialEventRow & { player_id: string } =>
       row.event_type === 'GOAL' && Boolean(row.player_id)
@@ -690,6 +693,7 @@ export async function GET() {
   });
   const seasonMap = new Map(allSeason.map(row => [row.player_id, row]));
   const matchMetricTotals = new Map<string, { assists: number; yellowCards: number; redCards: number }>();
+  const correctedCardPlayers = new Set<string>();
   const appearanceKeys = new Set<string>();
   const starterKeys = new Set<string>();
   const substituteAppearanceKeys = new Set<string>();
@@ -744,9 +748,11 @@ export async function GET() {
       if (championshipMatchIds.has(row.match_id)) championshipAppearanceKeys.add(key);
     }
     const current = matchMetricTotals.get(row.player_id) ?? { assists: 0, yellowCards: 0, redCards: 0 };
+    const doubleYellow = hasDoubleYellow(row.match_id, row.player_id);
+    if (doubleYellow) correctedCardPlayers.add(row.player_id);
     current.assists += optionalNum(row, assistKeys);
-    current.yellowCards += optionalNum(row, yellowCardKeys);
-    current.redCards += optionalNum(row, redCardKeys);
+    current.yellowCards += doubleYellow ? 0 : optionalNum(row, yellowCardKeys);
+    current.redCards += doubleYellow ? 1 : optionalNum(row, redCardKeys);
     matchMetricTotals.set(row.player_id, current);
   });
 
@@ -763,13 +769,9 @@ export async function GET() {
   const matchRowsById = new Map(
     allMatches.map(match => [match.match_id, match])
   );
-  const goalkeeperStats = buildGoalkeeperStats(
-    allMatches,
-    allLineups,
-    allSubstitutions,
-    allOfficialEvents,
-    playerNameMap
-  );
+  const goalkeeperStats = isStaff
+    ? buildGoalkeeperStats(allMatches, allLineups, allSubstitutions, allOfficialEvents, playerNameMap)
+    : undefined;
   const disciplineEvents = allOfficialEvents
     .filter(row =>
       Boolean(row.player_id) &&
@@ -787,6 +789,8 @@ export async function GET() {
         playerId,
         playerName: playerNameMap.get(playerId) || row.player_name || playerId,
         type: row.event_type as 'YELLOW_CARD' | 'SECOND_YELLOW_CARD' | 'RED_CARD',
+        reason: row.card_reason ?? null,
+        countsTowardAccumulation: row.event_type === 'YELLOW_CARD' && !hasDoubleYellow(row.match_id, playerId),
         minute: num(row.minuto),
         injuryTime: row.recupero === true,
       };
@@ -839,6 +843,7 @@ export async function GET() {
     const championshipSubstituteAppearances = [...championshipSubstituteAppearanceKeys].filter(key => key.endsWith(`|${p.player_id}`)).length;
     const minutes = num(s?.minuti);
     const goalTypes = goalTypesByPlayer.get(p.player_id) ?? { penaltyGoals: 0, freeKickGoals: 0 };
+    const useMatchCardTotals = correctedCardPlayers.has(p.player_id);
 
     return {
       playerId: p.player_id,
@@ -855,8 +860,8 @@ export async function GET() {
       penaltyGoals: goalTypes.penaltyGoals,
       freeKickGoals: goalTypes.freeKickGoals,
       assists: optionalNum(s, assistKeys) || matchTotals.assists,
-      yellowCards: optionalNum(s, yellowCardKeys) || matchTotals.yellowCards,
-      redCards: optionalNum(s, redCardKeys) || matchTotals.redCards,
+      yellowCards: useMatchCardTotals ? matchTotals.yellowCards : optionalNum(s, yellowCardKeys) || matchTotals.yellowCards,
+      redCards: useMatchCardTotals ? matchTotals.redCards : optionalNum(s, redCardKeys) || matchTotals.redCards,
       goalsPer90: num(s?.gol_per_90),
       shots: num(s?.tiri),
       shotsPer90: num(s?.tiri_per_90),
@@ -892,6 +897,7 @@ export async function GET() {
     const match = matchMap.get(s.match_id);
     const minutes = num(s.minuti);
     const goalTypes = goalTypesByMatchPlayer.get(`${s.match_id}|${s.player_id}`) ?? { penaltyGoals: 0, freeKickGoals: 0 };
+    const doubleYellow = hasDoubleYellow(s.match_id, s.player_id);
 
     return {
       matchId: s.match_id,
@@ -905,8 +911,8 @@ export async function GET() {
       penaltyGoals: goalTypes.penaltyGoals,
       freeKickGoals: goalTypes.freeKickGoals,
       assists: optionalNum(s, assistKeys),
-      yellowCards: optionalNum(s, yellowCardKeys),
-      redCards: optionalNum(s, redCardKeys),
+      yellowCards: doubleYellow ? 0 : optionalNum(s, yellowCardKeys),
+      redCards: doubleYellow ? 1 : optionalNum(s, redCardKeys),
       goalsPer90: num(s.gol_per_90) || per90(num(s.gol), minutes),
       shots: num(s.tiri),
       shotsPer90: num(s.tiri_per_90) || per90(num(s.tiri), minutes),

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '../../../../../lib/supabase/server';
+import { doubleYellowExpulsions, withCanonicalDismissals } from '../../../../../lib/match-discipline';
 import type {
   Competition,
   MatchReport,
@@ -34,6 +35,7 @@ type OfficialEventRow = {
   match_id: string;
   event_type: string;
   goal_type: string | null;
+  card_reason?: string | null;
   minuto: number;
   recupero: boolean;
   player_id: string | null;
@@ -183,6 +185,8 @@ const buildOfficialEvents = (players: MatchReportPlayer[]) => {
     events.push({
       type,
       goalType: null,
+      cardReason: null,
+      excludedFromAccumulation: false,
       label,
       playerName: player.name,
       playerId: player.playerId,
@@ -209,7 +213,8 @@ const buildOfficialEvents = (players: MatchReportPlayer[]) => {
 const buildDetailedOfficialEvents = (
   rows: OfficialEventRow[],
   playerNameMap: Map<string, string>,
-  jerseyByPlayerId: Map<string, number>
+  jerseyByPlayerId: Map<string, number>,
+  hasDoubleYellow: ReturnType<typeof doubleYellowExpulsions>
 ) => rows
   .map((row): MatchReportEvent | null => {
     const eventType = row.event_type.toUpperCase();
@@ -244,12 +249,15 @@ const buildDetailedOfficialEvents = (
       : eventType === 'YELLOW_CARD'
         ? 'Ammonizione'
         : eventType === 'SECOND_YELLOW_CARD'
-          ? 'Seconda ammonizione'
-          : 'Espulsione';
+          ? 'Espulsione per doppia ammonizione'
+          : 'Espulsione diretta';
 
     return {
       type,
       goalType,
+      cardReason: row.card_reason ?? null,
+      excludedFromAccumulation: eventType === 'SECOND_YELLOW_CARD' ||
+        (eventType === 'YELLOW_CARD' && !!row.player_id && hasDoubleYellow(row.match_id, row.player_id)),
       label,
       playerName: eventType === 'OPPONENT_GOAL'
         ? row.player_name && !/^sconosciuto$/i.test(row.player_name)
@@ -346,7 +354,7 @@ export async function GET(
     supabase.from('veo_event_positions').select('*').eq('match_id', matchId),
     supabase.from('match_lineups').select('match_id,player_id,numero,titolare,ordine').eq('match_id', matchId),
     supabase.from('match_substitutions').select('match_id,minuto,recupero,player_out_id,player_in_id').eq('match_id', matchId),
-    supabase.from('match_events').select('match_id,event_type,goal_type,minuto,recupero,player_id,player_name,related_player_id,related_player_name').eq('match_id', matchId),
+    supabase.from('match_events').select('*').eq('match_id', matchId),
   ]);
 
   if (matchResult.error) {
@@ -388,7 +396,8 @@ export async function GET(
   const statsRows = (statsResult.data ?? []) as DataRow[];
   const lineupRows = (lineupResult.data ?? []) as LineupRow[];
   const substitutionRows = (substitutionsResult.data ?? []) as SubstitutionRow[];
-  const officialEventRows = (officialEventsResult.data ?? []) as OfficialEventRow[];
+  const officialEventRows = withCanonicalDismissals((officialEventsResult.data ?? []) as OfficialEventRow[]);
+  const hasDoubleYellow = doubleYellowExpulsions(officialEventRows);
   const goalTypesByPlayerId = new Map<string, { penaltyGoals: number; freeKickGoals: number }>();
   officialEventRows.forEach(row => {
     if (row.event_type !== 'GOAL' || !row.player_id) return;
@@ -421,6 +430,7 @@ export async function GET(
   const players = statsRows
     .map((row): MatchReportPlayer => {
       const playerId = playerKey(row);
+      const doubleYellow = hasDoubleYellow(matchId, playerId);
       const goalTypes = goalTypesByPlayerId.get(playerId) ?? { penaltyGoals: 0, freeKickGoals: 0 };
       return {
         playerId,
@@ -431,8 +441,8 @@ export async function GET(
         penaltyGoals: goalTypes.penaltyGoals,
         freeKickGoals: goalTypes.freeKickGoals,
         assists: rowNumber(row, assistKeys),
-        yellowCards: rowNumber(row, yellowCardKeys),
-        redCards: rowNumber(row, redCardKeys),
+        yellowCards: doubleYellow ? 0 : rowNumber(row, yellowCardKeys),
+        redCards: doubleYellow ? 1 : rowNumber(row, redCardKeys),
         shots: rowNumber(row, metricKeys.shots),
         totalShots: rowNumber(row, metricKeys.totalShots),
         passes: rowNumber(row, metricKeys.passes),
@@ -482,7 +492,8 @@ export async function GET(
   const detailedOfficialEvents = buildDetailedOfficialEvents(
     officialEventRows,
     playerNameMap,
-    jerseyByPlayerId
+    jerseyByPlayerId,
+    hasDoubleYellow
   );
 
   const toPoint = (
