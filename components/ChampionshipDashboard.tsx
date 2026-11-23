@@ -90,6 +90,9 @@ const historyDateLabel = (date: string) => date
 const disciplineEventKey = (event: ChampionshipDisciplineEvent) =>
   [event.matchId, event.playerId, event.type, event.minute].join('|');
 
+const cardMinute = (event: ChampionshipDisciplineEvent) =>
+  `${event.minute}′${event.injuryTime ? ' rec.' : ''}`;
+
 const calculateDisciplineProgress = (events: ChampionshipDisciplineEvent[]) => {
   let stage = 0;
   let currentCount = 0;
@@ -240,8 +243,16 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
     .sort((a, b) =>
       a.date.localeCompare(b.date) ||
       a.minute - b.minute ||
+      Number(a.injuryTime) - Number(b.injuryTime) ||
       a.playerName.localeCompare(b.playerName, 'it')
     );
+  const disciplineEventsByPlayer = new Map<string, ChampionshipDisciplineEvent[]>();
+  championshipDisciplineEvents.forEach(event => {
+    const key = event.playerId || event.playerName;
+    const events = disciplineEventsByPlayer.get(key) ?? [];
+    events.push(event);
+    disciplineEventsByPlayer.set(key, events);
+  });
   const yellowEventsByPlayer = new Map<string, ChampionshipDisciplineEvent[]>();
 
   const validYellowEvents = championshipDisciplineEvents.filter(event => event.countsTowardAccumulation);
@@ -381,9 +392,38 @@ export function ChampionshipDashboard({ matches, playerStats, disciplineEvents }
       <section className="panel tablePanel homeDisciplinePanel">
         <div className="sectionTitle"><div><span className="eyebrow">DISCIPLINA</span><h2>Espulsi</h2></div><span>{redCards} cartellini</span></div>
         <div className="homeDisciplineList">
-          {sentOffPlayers.length ? sentOffPlayers.map((player, index) => <div className="homeDisciplineRow" key={player.name}>
-            <span className="rankNo">{index + 1}</span><strong>{player.name}</strong><span className="disciplineCount redCount">{player.redCards}</span>
-          </div>) : <p className="rankEmpty">Nessuna espulsione in campionato.</p>}
+          {sentOffPlayers.length ? sentOffPlayers.map((player, index) => {
+            const key = player.playerId || player.name;
+            const events = disciplineEventsByPlayer.get(key) ?? [];
+            const dismissals = events.filter(event => event.type !== 'YELLOW_CARD').reverse();
+
+            return <div className="homeDisciplineRow" key={key}>
+              <span className="rankNo">{index + 1}</span>
+              <div className="disciplinePlayerInfo">
+                <strong>{player.name}</strong>
+                {dismissals.map(event => {
+                  const doubleYellow = event.type === 'SECOND_YELLOW_CARD';
+                  const firstYellow = doubleYellow ? events.find(booking =>
+                    booking.matchId === event.matchId &&
+                    booking.type === 'YELLOW_CARD' &&
+                    !booking.countsTowardAccumulation &&
+                    (booking.minute < event.minute ||
+                      (booking.minute === event.minute && (!booking.injuryTime || event.injuryTime)))
+                  ) : undefined;
+
+                  return <div key={disciplineEventKey(event)}>
+                    <small>{doubleYellow ? 'Espulsione per doppio giallo' : 'Espulsione diretta'} · {opponentLabel(event.match)} · {cardMinute(event)}</small>
+                    {doubleYellow ? <>
+                      <small>Primo giallo · {firstYellow ? `${cardMinute(firstYellow)} · ${firstYellow.reason || 'Motivazione non disponibile'}` : 'Dettaglio non disponibile'}</small>
+                      <small>Secondo giallo · {cardMinute(event)} · {event.reason || 'Motivazione non disponibile'}</small>
+                    </> : event.reason && <small>Motivazione · {event.reason}</small>}
+                  </div>;
+                })}
+                {dismissals.length < player.redCards && <small>Tipo di espulsione non disponibile {dismissals.length > 0 && `per ${number(player.redCards - dismissals.length)} episodi`}</small>}
+              </div>
+              <span className="disciplineCount redCount">{player.redCards}</span>
+            </div>;
+          }) : <p className="rankEmpty">Nessuna espulsione in campionato.</p>}
         </div>
       </section>
     </div>
